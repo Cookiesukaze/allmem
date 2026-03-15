@@ -1,0 +1,211 @@
+// Skill installer: register AllMem skill into AI tools
+
+import { exists, mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
+import { join, homeDir } from "@tauri-apps/api/path";
+
+const ALLMEM_SKILL_MD = `---
+name: allmem
+description: >
+  跨AI工具统一记忆管理。使用此skill可以加载你在所有AI工具(Claude/Codex/Cursor等)
+  中积累的项目记忆和用户画像，让AI从第一句话就了解你和你的项目。
+  触发词: "加载记忆", "load memory", "allmem", "项目上下文", "project context",
+  "你还记得吗", "之前我们讨论过"
+license: MIT
+metadata:
+  author: AllMem
+  version: "0.1.0"
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
+---
+
+# AllMem - 跨AI工具记忆注入
+
+当用户需要项目上下文或个人记忆时，执行以下步骤：
+
+## 步骤
+
+### 1. 读取用户全局信息
+
+\`\`\`bash
+cat ~/.allmem/user/instructions.md
+cat ~/.allmem/user/latest.md
+\`\`\`
+
+### 2. 识别当前项目
+
+根据当前工作目录，在 \`~/.allmem/projects/\` 下找到对应的项目目录。
+可以通过读取各项目的 \`meta.json\` 中的 \`path\` 字段来匹配。
+
+\`\`\`bash
+# 列出所有项目
+ls ~/.allmem/projects/
+# 读取某个项目的元信息
+cat ~/.allmem/projects/<project>/meta.json
+\`\`\`
+
+### 3. 读取项目记忆和项目使用说明
+
+\`\`\`bash
+# 项目记忆（AI自动整理）
+cat ~/.allmem/projects/<project>/latest.md
+# 项目使用说明（用户自己维护的，非常重要）
+cat ~/.allmem/projects/<project>/instructions.md
+\`\`\`
+
+### 4. 注入上下文
+
+将用户画像、项目记忆、项目使用说明整合，写入当前工具的配置文件：
+
+- Claude Code: 写入 \`CLAUDE.md\` 的 \`<!-- allmem-start -->\` 到 \`<!-- allmem-end -->\` 区块
+- Codex CLI: 写入 \`AGENTS.md\` 的 \`<!-- allmem-start -->\` 到 \`<!-- allmem-end -->\` 区块
+
+注入格式示例：
+\`\`\`markdown
+<!-- allmem-start -->
+## AllMem 记忆上下文
+
+### 用户全局说明
+{用户instructions.md内容}
+
+### 用户画像
+{用户latest.md内容}
+
+### 项目使用说明
+{项目instructions.md内容 - 用户自己维护的}
+
+### 项目记忆
+{项目latest.md内容 - AI自动整理的}
+
+*最后更新: {时间}*
+<!-- allmem-end -->
+\`\`\`
+
+**重要**: 保留配置文件中已有的其他内容，只更新AllMem区块。如果区块不存在则追加到文件末尾。
+
+### 5. 报告
+
+告诉用户：
+- 加载了哪个项目的记忆
+- 记忆的最后更新时间
+- 简要概括项目当前状态
+`;
+
+const ALLMEM_UNDO_SKILL_MD = `---
+name: allmem-undo
+description: >
+  撤销AllMem的上下文注入，删除CLAUDE.md/AGENTS.md中的AllMem区块。
+  触发词: "撤销记忆", "undo allmem", "清除注入的上下文"
+license: MIT
+metadata:
+  author: AllMem
+  version: "0.1.0"
+allowed-tools:
+  - Read
+  - Edit
+---
+
+# AllMem - 撤销上下文注入
+
+删除当前项目配置文件中的AllMem注入区块。
+
+## 步骤
+
+### 1. 检测配置文件
+
+检查当前目录是否有 \`CLAUDE.md\` 或 \`AGENTS.md\`。
+
+### 2. 删除AllMem区块
+
+找到 \`<!-- allmem-start -->\` 和 \`<!-- allmem-end -->\` 之间的内容（含标记本身），删除。
+
+### 3. 确认
+
+告诉用户已撤销注入。
+`;
+
+export async function installSkillToClaude(): Promise<boolean> {
+  const home = await homeDir();
+  const skillDir = await join(home, ".claude", "skills", "allmem");
+  const undoSkillDir = await join(home, ".claude", "skills", "allmem-undo");
+
+  try {
+    if (!(await exists(skillDir))) {
+      await mkdir(skillDir, { recursive: true });
+    }
+    if (!(await exists(undoSkillDir))) {
+      await mkdir(undoSkillDir, { recursive: true });
+    }
+
+    await writeTextFile(await join(skillDir, "SKILL.md"), ALLMEM_SKILL_MD);
+    await writeTextFile(await join(undoSkillDir, "SKILL.md"), ALLMEM_UNDO_SKILL_MD);
+
+    return true;
+  } catch (err) {
+    console.error("Failed to install skill to Claude:", err);
+    return false;
+  }
+}
+
+export async function installSkillToCodex(): Promise<boolean> {
+  const home = await homeDir();
+  // Codex CLI uses ~/.codex/instructions.md as global instructions
+  // We install our skill instructions there
+  const codexDir = await join(home, ".codex");
+
+  try {
+    if (!(await exists(codexDir))) {
+      await mkdir(codexDir, { recursive: true });
+    }
+
+    const instructionsPath = await join(codexDir, "instructions.md");
+    const skillContent = `
+# AllMem 记忆加载
+
+当用户说"加载记忆"、"allmem"、"项目上下文"时，执行以下操作：
+
+1. 读取 ~/.allmem/user/instructions.md（用户全局说明）和 ~/.allmem/user/latest.md（用户画像）
+2. 根据当前工作目录匹配 ~/.allmem/projects/ 下的项目（读取各项目 meta.json 的 path 字段）
+3. 读取匹配项目的 latest.md（项目记忆）和 instructions.md（项目使用说明）
+4. 将这些信息写入当前目录的 AGENTS.md 的 <!-- allmem-start --> 到 <!-- allmem-end --> 区块
+5. 报告加载了什么
+
+当用户说"撤销记忆"、"undo allmem"时，删除 AGENTS.md 中的 <!-- allmem-start/end --> 区块。
+`;
+
+    // Append to existing instructions if present, or create new
+    try {
+      const { readTextFile } = await import("@tauri-apps/plugin-fs");
+      const existing = await readTextFile(instructionsPath);
+      if (!existing.includes("AllMem 记忆加载")) {
+        await writeTextFile(instructionsPath, existing + "\n" + skillContent);
+      }
+    } catch {
+      await writeTextFile(instructionsPath, skillContent);
+    }
+
+    return true;
+  } catch (err) {
+    console.error("Failed to install skill to Codex:", err);
+    return false;
+  }
+}
+
+export async function isSkillInstalled(tool: "claude" | "codex"): Promise<boolean> {
+  const home = await homeDir();
+  if (tool === "claude") {
+    return exists(await join(home, ".claude", "skills", "allmem", "SKILL.md"));
+  }
+  if (tool === "codex") {
+    try {
+      const { readTextFile } = await import("@tauri-apps/plugin-fs");
+      const content = await readTextFile(await join(home, ".codex", "instructions.md"));
+      return content.includes("AllMem 记忆加载");
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
