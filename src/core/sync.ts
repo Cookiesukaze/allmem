@@ -1,7 +1,8 @@
 // Sync engine: orchestrate multi-agent extraction and archiving
 
 import { extractClaudeSessions, extractCodexSessions, turnsToText, groupByProject } from "./extractor";
-import { extractStructured, extractUserInfo, generateVersionSummary, generateProjectDescription } from "./llm";
+import { summarizeSingleConversation, compactMemory, extractUserInfo, generateVersionSummary, generateProjectDescription } from "./llm";
+import { redactSensitive } from "./privacy";
 import {
   loadConfig,
   saveConfig,
@@ -11,6 +12,10 @@ import {
   saveProjectMeta,
   loadProjectMemory,
   saveProjectMemory,
+  loadProjectRecent,
+  appendProjectRecent,
+  clearProjectRecent,
+  countRecentEntries,
   appendSyncLog,
   initStorage,
 } from "./storage";
@@ -115,11 +120,11 @@ export async function runSync(
           .sort((a, b) => a.lastModified - b.lastModified)
           .flatMap((s) => s.turns);
 
-        const conversationText = turnsToText(
+        const conversationText = redactSensitive(turnsToText(
           allTurns,
           config.sync.maxTurns ?? 80,
           config.sync.maxCharsPerTurn ?? 800
-        );
+        ), config);
 
         // Collect user-level info for later
         userConversations.push(conversationText);
@@ -137,23 +142,47 @@ export async function runSync(
 
         console.log(`[sync] ${isUpdate ? "Updating" : "Creating"} project: ${projectName} (${allTurns.length} turns)`);
 
-        // Call LLM to extract structured memory
-        const newMemory = await extractStructured(
+        // ── WAL mode: lightweight summary → append to recent.md ──
+        const sessionSource = sessions[0]?.sessionId?.includes("codex") ? "codex" : "claude";
+        const summary = await summarizeSingleConversation(
           conversationText,
           projectName,
-          existingMemory,
           config.llm
         );
+        await appendProjectRecent(alias, summary, sessionSource);
 
-        // Generate version summary
-        const summary = await generateVersionSummary(
-          existingMemory,
-          newMemory,
-          config.llm
-        );
+        // ── Check if compaction is needed ──
+        const COMPACTION_THRESHOLD = config.sync.compactionThreshold ?? 10;
+        const recentCount = await countRecentEntries(alias);
 
-        // Save project memory (with version history)
-        await saveProjectMemory(alias, newMemory, summary);
+        if (recentCount >= COMPACTION_THRESHOLD || !existingMemory) {
+          // Compaction: merge recent.md into latest.md
+          onProgress?.({
+            stage: "压缩",
+            detail: `压缩 ${projectName} 的记忆 (${recentCount} 条近期记录)...`,
+            progress: 30 + (processedProjects / totalProjects) * 50 + 5,
+          });
+
+          const recentContent = await loadProjectRecent(alias);
+          const newMemory = await compactMemory(
+            existingMemory,
+            recentContent ?? summary,
+            projectName,
+            config.llm
+          );
+
+          const versionSummary = await generateVersionSummary(
+            existingMemory,
+            newMemory,
+            config.llm
+          );
+          await saveProjectMemory(alias, newMemory, versionSummary);
+          await clearProjectRecent(alias);
+
+          console.log(`[sync] Compacted: ${projectName} (${recentCount} entries merged)`);
+        } else {
+          console.log(`[sync] WAL append: ${projectName} (${recentCount}/${COMPACTION_THRESHOLD} entries)`);
+        }
 
         // Save/update project meta
         const existingMeta = await loadProjectMeta(alias);
@@ -179,7 +208,7 @@ export async function runSync(
           notes: existingMeta?.notes ?? "",
           created: existingMeta?.created ?? new Date().toISOString(),
           lastSync: new Date().toISOString(),
-          currentVersion: (existingMeta?.currentVersion ?? 0) + 1,
+          currentVersion: existingMeta?.currentVersion ?? (existingMemory ? 1 : 0),
           status: "active",
         };
         await saveProjectMeta(alias, meta);

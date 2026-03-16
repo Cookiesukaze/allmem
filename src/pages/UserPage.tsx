@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Save, Pencil } from "lucide-react";
 import { loadUserMemory, saveUserMemory, loadUserInstructions, saveUserInstructions } from "../core/storage";
+import { MarkdownView } from "../components/MarkdownView";
 
 export function UserPage() {
   const [memory, setMemory] = useState<string>("");
@@ -81,13 +82,15 @@ export function UserPage() {
             placeholder="例如：我习惯用 TypeScript + React，回答请用中文，代码注释用英文..."
           />
         ) : (
-          <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed min-h-[2rem]">
-            {instructions || (
-              <span className="text-muted-foreground">
+          <div className="min-h-[2rem]">
+            {instructions ? (
+              <MarkdownView content={instructions} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
                 暂无。点击编辑添加你希望AI始终记住的信息。
-              </span>
+              </p>
             )}
-          </pre>
+          </div>
         )}
       </div>
 
@@ -136,13 +139,15 @@ export function UserPage() {
             placeholder="输入用户画像..."
           />
         ) : (
-          <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed">
-            {memory || (
-              <span className="text-muted-foreground">
+          <div>
+            {memory ? (
+              <MarkdownView content={memory} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
                 暂无用户画像。请先执行同步，系统会自动从你的AI对话中提取个人信息。
-              </span>
+              </p>
             )}
-          </pre>
+          </div>
         )}
       </div>
     </div>

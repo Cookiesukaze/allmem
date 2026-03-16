@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { RefreshCw, FolderOpen, Clock, CheckCircle2, AlertCircle } from "lucide-react";
 import { useAppStore } from "../store";
 import { runSync } from "../core/sync";
-import { listProjects } from "../core/storage";
+import { listProjects, loadConfig } from "../core/storage";
 import { detectAgents } from "../core/detector";
 
 export function DashboardPage() {
@@ -13,16 +13,18 @@ export function DashboardPage() {
     setIsSyncing,
     syncProgress,
     setSyncProgress,
-    lastSyncResults,
     setLastSyncResults,
     detectedAgents,
     setDetectedAgents,
+    config,
+    setConfig,
   } = useAppStore();
 
   useEffect(() => {
     // Load initial data
     listProjects().then(setProjects).catch(console.error);
     detectAgents().then(setDetectedAgents).catch(console.error);
+    loadConfig().then(setConfig).catch(console.error);
   }, []);
 
   const handleSync = async () => {
@@ -37,6 +39,9 @@ export function DashboardPage() {
       // Refresh project list
       const updated = await listProjects();
       setProjects(updated);
+      // Refresh config to update lastSyncTimestamp
+      const updatedConfig = await loadConfig();
+      setConfig(updatedConfig);
       // Show errors if any
       const errors = results.flatMap((r) => r.errors);
       if (errors.length > 0) {
@@ -114,10 +119,12 @@ export function DashboardPage() {
         <div className="bg-card rounded-xl border border-border p-4">
           <div className="flex items-center gap-2 text-muted-foreground mb-2">
             <CheckCircle2 size={14} />
-            <span className="text-xs font-medium">最近同步</span>
+            <span className="text-xs font-medium">上次同步</span>
           </div>
           <p className="text-sm font-medium">
-            {lastSyncResults ? "刚刚" : "未同步"}
+            {config.sync.lastSyncTimestamp
+              ? new Date(config.sync.lastSyncTimestamp).toLocaleString()
+              : "未同步"}
           </p>
         </div>
       </div>

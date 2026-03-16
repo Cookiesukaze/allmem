@@ -12,9 +12,15 @@ export interface AllMemConfig {
     maxTurns: number;        // max conversation turns to process per project
     maxCharsPerTurn: number; // truncate each turn to this many chars
     lastSyncTimestamp?: number; // epoch ms of last sync
+    compactionThreshold: number; // number of recent entries before compacting into latest.md
   };
   agents: string[];          // enabled agent ids: ["claude", "codex"]
   syncProjects: string[];    // project aliases to sync (empty = all)
+  privacy: {
+    enabled: boolean;
+    sensitiveWords: string[];  // words to redact before LLM processing and in stored memories
+    replacement: string;       // replacement text, default "[***]"
+  };
 }
 
 export interface ProjectMeta {
@@ -74,7 +80,13 @@ export const DEFAULT_CONFIG: AllMemConfig = {
     intervalMinutes: 30,
     maxTurns: 80,
     maxCharsPerTurn: 800,
+    compactionThreshold: 10,
   },
   agents: ["claude", "codex"],
   syncProjects: [], // empty = sync all detected
+  privacy: {
+    enabled: false,
+    sensitiveWords: [],
+    replacement: "[***]",
+  },
 };

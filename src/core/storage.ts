@@ -124,6 +124,56 @@ export async function saveProjectInstructions(alias: string, content: string): P
   await writeTextFile(await join(projectDir, "instructions.md"), content);
 }
 
+// ── Project Recent (WAL-style incremental log) ─────────────────────────
+
+export async function loadProjectRecent(alias: string): Promise<string | null> {
+  const dir = await getAllMemDir();
+  try {
+    return await readTextFile(await join(dir, "projects", alias, "recent.md"));
+  } catch {
+    return null;
+  }
+}
+
+export async function appendProjectRecent(
+  alias: string,
+  entry: string,
+  source: string
+): Promise<void> {
+  const dir = await getAllMemDir();
+  const projectDir = await join(dir, "projects", alias);
+  if (!(await exists(projectDir))) {
+    await mkdir(projectDir, { recursive: true });
+  }
+  const recentPath = await join(projectDir, "recent.md");
+  const now = new Date().toLocaleString("zh-CN");
+  const newEntry = `\n### ${now} (${source})\n${entry}\n`;
+
+  try {
+    const existing = await readTextFile(recentPath);
+    await writeTextFile(recentPath, existing + newEntry);
+  } catch {
+    await writeTextFile(recentPath, `# 近期动态\n${newEntry}`);
+  }
+}
+
+export async function clearProjectRecent(alias: string): Promise<void> {
+  const dir = await getAllMemDir();
+  const recentPath = await join(dir, "projects", alias, "recent.md");
+  try {
+    await writeTextFile(recentPath, "# 近期动态\n");
+  } catch {
+    // ignore
+  }
+}
+
+export async function countRecentEntries(alias: string): Promise<number> {
+  const recent = await loadProjectRecent(alias);
+  if (!recent) return 0;
+  // Count ### headers as entries
+  return (recent.match(/^### /gm) || []).length;
+}
+
 // ── Project Memory ─────────────────────────────────────────────────────
 
 export async function loadProjectMeta(alias: string): Promise<ProjectMeta | null> {

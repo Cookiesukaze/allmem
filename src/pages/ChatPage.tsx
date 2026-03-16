@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Trash2 } from "lucide-react";
 import { useAppStore } from "../store";
-import { loadProjectMemory, loadUserMemory, loadUserInstructions, loadProjectInstructions, listProjects } from "../core/storage";
+import { MarkdownView } from "../components/MarkdownView";
+import { loadProjectMemory, loadProjectRecent, loadUserMemory, loadUserInstructions, loadProjectInstructions, listProjects } from "../core/storage";
 import { callLLM } from "../core/llm";
 import type { ProjectMeta } from "../core/types";
 
@@ -51,12 +52,16 @@ export function ChatPage() {
 
       for (const alias of selectedProjects) {
         const mem = await loadProjectMemory(alias);
+        const recent = await loadProjectRecent(alias);
         const instr = await loadProjectInstructions(alias);
         if (instr) {
           contextParts.push(`## 项目说明: ${alias}\n${instr}`);
         }
         if (mem) {
-          contextParts.push(`## 项目记忆: ${alias}\n${mem}`);
+          contextParts.push(`## 项目长期记忆: ${alias}\n${mem}`);
+        }
+        if (recent) {
+          contextParts.push(`## 项目近期动态: ${alias}\n${recent}`);
         }
       }
 
@@ -65,12 +70,16 @@ export function ChatPage() {
         for (const p of projects) {
           if (query.includes(p.alias) || (p.path && query.includes(p.path.split("/").pop() ?? ""))) {
             const mem = await loadProjectMemory(p.alias);
+            const recent = await loadProjectRecent(p.alias);
             const instr = await loadProjectInstructions(p.alias);
             if (instr) {
               contextParts.push(`## 项目说明: ${p.alias}\n${instr}`);
             }
             if (mem) {
-              contextParts.push(`## 项目记忆: ${p.alias}\n${mem}`);
+              contextParts.push(`## 项目长期记忆: ${p.alias}\n${mem}`);
+            }
+            if (recent) {
+              contextParts.push(`## 项目近期动态: ${p.alias}\n${recent}`);
             }
           }
         }
@@ -192,9 +201,11 @@ ${contextParts.length > 0 ? "=== 记忆上下文 ===\n" + contextParts.join("\n\
                     : "bg-secondary/70 border border-border"
                 }`}
               >
-                <pre className="whitespace-pre-wrap font-sans leading-relaxed">
-                  {msg.content}
-                </pre>
+                {msg.role === "user" ? (
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                ) : (
+                  <MarkdownView content={msg.content} />
+                )}
               </div>
             </div>
           ))}

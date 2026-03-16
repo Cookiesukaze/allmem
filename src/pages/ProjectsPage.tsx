@@ -4,6 +4,7 @@ import {
   Globe, Trash2, FolderOpen, Pencil,
 } from "lucide-react";
 import { useAppStore } from "../store";
+import { MarkdownView } from "../components/MarkdownView";
 import {
   loadProjectMemory,
   loadProjectMeta,
@@ -11,6 +12,7 @@ import {
   saveProjectMeta,
   loadProjectInstructions,
   saveProjectInstructions,
+  loadProjectRecent,
   listVersions,
   loadVersionContent,
   setVersionAsCurrent,
@@ -40,10 +42,12 @@ export function ProjectsPage() {
   const [projectInstructions, setProjectInstructions] = useState("");
   const [editingInstructions, setEditingInstructions] = useState(false);
   const [instructionsDraft, setInstructionsDraft] = useState("");
+  const [recentMemory, setRecentMemory] = useState<string>("");
 
   useEffect(() => {
     if (selectedProject) {
       loadProjectMemory(selectedProject).then((m) => setMemory(m ?? ""));
+      loadProjectRecent(selectedProject).then((r) => setRecentMemory(r ?? ""));
       loadProjectMeta(selectedProject).then((m) => {
         // Ensure notes field exists for old data
         if (m && !("notes" in m)) (m as ProjectMeta).notes = "";
@@ -445,13 +449,15 @@ export function ProjectsPage() {
             placeholder="例如：这个项目用 Tauri + React，注意 Windows 路径兼容性，优先用中文注释..."
           />
         ) : (
-          <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed min-h-[2rem]">
-            {projectInstructions || (
-              <span className="text-muted-foreground">
+          <div className="min-h-[2rem]">
+            {projectInstructions ? (
+              <MarkdownView content={projectInstructions} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
                 暂无。点击编辑添加你希望AI在处理此项目时始终记住的信息。
-              </span>
+              </p>
             )}
-          </pre>
+          </div>
         )}
       </div>
 
@@ -526,16 +532,33 @@ export function ProjectsPage() {
               关闭
             </button>
           </div>
-          <pre className="text-xs whitespace-pre-wrap font-mono bg-secondary/50 rounded-lg p-3 max-h-64 overflow-y-auto">
-            {viewingVersion}
-          </pre>
+          <div className="bg-secondary/50 rounded-lg p-3 max-h-64 overflow-y-auto">
+            <MarkdownView content={viewingVersion} />
+          </div>
+        </div>
+      )}
+
+      {/* Recent Activity (WAL) */}
+      {recentMemory && recentMemory.trim() !== "# 近期动态" && (
+        <div className="bg-card rounded-xl border border-amber-500/20 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h3 className="text-sm font-medium">近期动态</h3>
+              <p className="text-[10px] text-muted-foreground">
+                最近同步的对话摘要，攒够一定数量后会自动压缩到长期记忆中
+              </p>
+            </div>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <MarkdownView content={recentMemory} />
+          </div>
         </div>
       )}
 
       {/* Memory Content */}
       <div className="bg-card rounded-xl border border-border p-4">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-medium">项目记忆</h3>
+          <h3 className="text-sm font-medium">长期记忆</h3>
           {editing ? (
             <button
               onClick={handleSave}
@@ -565,9 +588,13 @@ export function ProjectsPage() {
             placeholder="输入记忆内容..."
           />
         ) : (
-          <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed">
-            {memory || "暂无记忆内容。请先执行同步或导入记忆。"}
-          </pre>
+          <div>
+            {memory ? (
+              <MarkdownView content={memory} />
+            ) : (
+              <p className="text-sm text-muted-foreground">暂无记忆内容。请先执行同步或导入记忆。</p>
+            )}
+          </div>
         )}
       </div>
     </div>

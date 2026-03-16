@@ -163,7 +163,7 @@ export function SettingsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div>
             <label className="text-xs text-muted-foreground block mb-1">
               最大对话轮次
@@ -198,6 +198,24 @@ export function SettingsPage() {
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
             <p className="text-[10px] text-muted-foreground mt-0.5">超过则截断，节省token</p>
+          </div>
+
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">
+              压缩阈值
+            </label>
+            <input
+              type="number"
+              value={config.sync.compactionThreshold ?? 10}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  sync: { ...config.sync, compactionThreshold: parseInt(e.target.value) || 10 },
+                })
+              }
+              className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
+            />
+            <p className="text-[10px] text-muted-foreground mt-0.5">近期记录攒够N条后压缩</p>
           </div>
         </div>
       </div>
@@ -250,6 +268,77 @@ export function SettingsPage() {
             </p>
           )}
         </div>
+      </div>
+
+      {/* Privacy Protection */}
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium">隐私保护</h3>
+            <p className="text-xs text-muted-foreground">
+              同步时自动屏蔽敏感信息，防止真实姓名、手机号等泄露到记忆中
+            </p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config.privacy?.enabled ?? false}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  privacy: { ...config.privacy, enabled: e.target.checked },
+                })
+              }
+              className="accent-primary"
+            />
+            <span className="text-xs">启用</span>
+          </label>
+        </div>
+
+        {config.privacy?.enabled && (
+          <>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">
+                替换为
+              </label>
+              <input
+                type="text"
+                value={config.privacy?.replacement ?? "[***]"}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    privacy: { ...config.privacy, replacement: e.target.value },
+                  })
+                }
+                className="w-40 px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">
+                敏感词列表（每行一个）
+              </label>
+              <textarea
+                value={(config.privacy?.sensitiveWords ?? []).join("\n")}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    privacy: {
+                      ...config.privacy,
+                      sensitiveWords: e.target.value.split("\n").filter((s) => s.trim()),
+                    },
+                  })
+                }
+                rows={5}
+                placeholder={"张三\n13812345678\nzhangsan@email.com\n某某大学"}
+                className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary resize-none font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                这些词会在发送给LLM之前和保存记忆时被替换为"{config.privacy?.replacement ?? "[***]"}"
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Skill Installation */}
