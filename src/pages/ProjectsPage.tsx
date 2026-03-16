@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ChevronLeft, Clock, RotateCcw, Save, Plus, Upload, FileText,
-  Globe, Trash2, FolderOpen, Pencil,
+  Globe, Trash2, FolderOpen, Pencil, RefreshCw,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { MarkdownView } from "../components/MarkdownView";
@@ -24,10 +24,12 @@ import { join, homeDir } from "@tauri-apps/api/path";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { readTextFile } from "@tauri-apps/plugin-fs";
+import { runSync } from "../core/sync";
+import { loadConfig } from "../core/storage";
 import type { MemoryVersion, ProjectMeta } from "../core/types";
 
 export function ProjectsPage() {
-  const { projects, setProjects, selectedProject, setSelectedProject } = useAppStore();
+  const { projects, setProjects, selectedProject, setSelectedProject, setConfig, projectSyncing: syncing, projectSyncStatus: syncStatus, setProjectSyncing: setSyncing, setProjectSyncStatus: setSyncStatus } = useAppStore();
   const [memory, setMemory] = useState<string>("");
   const [meta, setMeta] = useState<ProjectMeta | null>(null);
   const [versions, setVersions] = useState<MemoryVersion[]>([]);
@@ -134,6 +136,46 @@ export function ProjectsPage() {
   const refreshProjects = async () => {
     const updated = await listProjects();
     setProjects(updated);
+  };
+
+  const handleSyncProject = async () => {
+    if (!selectedProject || syncing) return;
+    setSyncing(true);
+    setSyncStatus("同步中...");
+    try {
+      const results = await runSync(
+        (progress) => {
+          setSyncStatus(progress.detail);
+          // Refresh project data as soon as it completes
+          if (progress.completedProject === selectedProject) {
+            loadProjectMemory(selectedProject).then((m) => setMemory(m ?? ""));
+            loadProjectRecent(selectedProject).then((r) => setRecentMemory(r ?? ""));
+            loadProjectMeta(selectedProject).then((m) => {
+              if (m && !("notes" in m)) (m as ProjectMeta).notes = "";
+              setMeta(m);
+            });
+            loadProjectVersions();
+          }
+        },
+        false,
+        [selectedProject]
+      );
+      const errors = results.flatMap((r) => r.errors);
+      if (errors.length > 0) {
+        setSyncStatus(`同步出错: ${errors.join("; ")}`);
+      } else {
+        setSyncStatus("同步完成!");
+        const updated = await listProjects();
+        setProjects(updated);
+        const updatedConfig = await loadConfig();
+        setConfig(updatedConfig);
+      }
+      setTimeout(() => setSyncStatus(""), 2000);
+    } catch (err) {
+      setSyncStatus(`同步失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   // ── Project List View ──
@@ -249,6 +291,14 @@ export function ProjectsPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleSyncProject}
+            disabled={syncing}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
+            {syncing ? "同步中..." : "同步"}
+          </button>
           {meta?.path && (
             <button
               onClick={() => handleOpenFolder(meta.path)}
@@ -286,6 +336,13 @@ export function ProjectsPage() {
           </button>
         </div>
       </div>
+
+      {/* Sync Status */}
+      {syncStatus && (
+        <div className="bg-card rounded-xl border border-border p-3">
+          <p className="text-xs text-muted-foreground">{syncStatus}</p>
+        </div>
+      )}
 
       {/* Meta Info Card */}
       {meta && (
@@ -539,21 +596,25 @@ export function ProjectsPage() {
       )}
 
       {/* Recent Activity (WAL) */}
-      {recentMemory && recentMemory.trim() !== "# 近期动态" && (
-        <div className="bg-card rounded-xl border border-amber-500/20 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <div>
-              <h3 className="text-sm font-medium">近期动态</h3>
-              <p className="text-[10px] text-muted-foreground">
-                最近同步的对话摘要，攒够一定数量后会自动压缩到长期记忆中
-              </p>
-            </div>
+      <div className="bg-card rounded-xl border border-amber-500/20 p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h3 className="text-sm font-medium">近期动态</h3>
+            <p className="text-[10px] text-muted-foreground">
+              最近同步的对话摘要，攒够一定数量后会自动压缩到长期记忆中
+            </p>
           </div>
+        </div>
+        {recentMemory && recentMemory.trim() !== "# 近期动态" ? (
           <div className="max-h-64 overflow-y-auto">
             <MarkdownView content={recentMemory} />
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            暂无近期动态。{memory ? "已压缩到长期记忆中。" : "请先执行同步。"}
+          </p>
+        )}
+      </div>
 
       {/* Memory Content */}
       <div className="bg-card rounded-xl border border-border p-4">

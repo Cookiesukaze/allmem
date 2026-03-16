@@ -15,7 +15,8 @@ export interface AllMemConfig {
     compactionThreshold: number; // number of recent entries before compacting into latest.md
   };
   agents: string[];          // enabled agent ids: ["claude", "codex"]
-  syncProjects: string[];    // project aliases to sync (empty = all)
+  syncAll: boolean;            // true = sync all detected projects, false = only syncProjects
+  syncProjects: string[];    // project aliases to sync (only used when syncAll=false)
   privacy: {
     enabled: boolean;
     sensitiveWords: string[];  // words to redact before LLM processing and in stored memories
@@ -83,7 +84,8 @@ export const DEFAULT_CONFIG: AllMemConfig = {
     compactionThreshold: 10,
   },
   agents: ["claude", "codex"],
-  syncProjects: [], // empty = sync all detected
+  syncAll: true,
+  syncProjects: [],
   privacy: {
     enabled: false,
     sensitiveWords: [],

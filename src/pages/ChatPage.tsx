@@ -7,9 +7,8 @@ import { callLLM } from "../core/llm";
 import type { ProjectMeta } from "../core/types";
 
 export function ChatPage() {
-  const { config, chatMessages, addChatMessage, clearChat } = useAppStore();
+  const { config, chatMessages, addChatMessage, clearChat, chatLoading: loading, setChatLoading: setLoading } = useAppStore();
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);

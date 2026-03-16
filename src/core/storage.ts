@@ -147,7 +147,18 @@ export async function appendProjectRecent(
   }
   const recentPath = await join(projectDir, "recent.md");
   const now = new Date().toLocaleString("zh-CN");
-  const newEntry = `\n### ${now} (${source})\n${entry}\n`;
+  // Ensure each line is a bullet point (- prefix)
+  const normalizedEntry = entry
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      // Strip existing bullet markers and normalize to "- "
+      const stripped = line.replace(/^[-*•·]\s*/, "").replace(/^\d+[.)]\s*/, "");
+      return `- ${stripped}`;
+    })
+    .join("\n");
+  const newEntry = `\n### ${now} (${source})\n${normalizedEntry}\n`;
 
   try {
     const existing = await readTextFile(recentPath);
@@ -170,8 +181,8 @@ export async function clearProjectRecent(alias: string): Promise<void> {
 export async function countRecentEntries(alias: string): Promise<number> {
   const recent = await loadProjectRecent(alias);
   if (!recent) return 0;
-  // Count ### headers as entries
-  return (recent.match(/^### /gm) || []).length;
+  // Count bullet points (- lines) as individual entries
+  return (recent.match(/^- /gm) || []).length;
 }
 
 // ── Project Memory ─────────────────────────────────────────────────────

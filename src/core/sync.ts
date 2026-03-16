@@ -25,16 +25,21 @@ export interface SyncProgress {
   stage: string;
   detail: string;
   progress: number; // 0-100
+  completedProject?: string; // alias of just-finished project
 }
 
 type ProgressCallback = (progress: SyncProgress) => void;
 
 /**
  * Run a full sync: extract from all enabled agents, structure, and archive
+ * @param onProgress - progress callback
+ * @param dryRun - if true, only report what would be synced
+ * @param targetProjects - if set, only sync these project aliases (overrides config)
  */
 export async function runSync(
   onProgress?: ProgressCallback,
-  dryRun = false
+  dryRun = false,
+  targetProjects?: string[]
 ): Promise<SyncResult[]> {
   await initStorage();
   const config = await loadConfig();
@@ -95,11 +100,54 @@ export async function runSync(
 
   // Filter by syncProjects if specified
   const filteredGroups = new Map<string, typeof allSessions>();
+  const effectiveSyncAll = targetProjects ? false : config.syncAll;
+  const effectiveSyncProjects = targetProjects ?? config.syncProjects;
   for (const [path, sessions] of projectGroups) {
     const projectName = sessions[0].projectName;
     const alias = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-    if (config.syncProjects.length === 0 || config.syncProjects.includes(alias)) {
+    if (effectiveSyncAll || effectiveSyncProjects.includes(alias)) {
       filteredGroups.set(path, sessions);
+    }
+  }
+
+  // If user selected specific projects that weren't found in incremental extraction,
+  // do a full extraction (no sinceTimestamp) to find them
+  if (!effectiveSyncAll && sinceTimestamp) {
+    const foundAliases = new Set<string>();
+    for (const [, sessions] of filteredGroups) {
+      const alias = sessions[0].projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      foundAliases.add(alias);
+    }
+    const missingAliases = effectiveSyncProjects.filter((a) => !foundAliases.has(a));
+
+    if (missingAliases.length > 0) {
+      onProgress?.({
+        stage: "提取",
+        detail: `为 ${missingAliases.join("、")} 重新全量提取...`,
+        progress: 25,
+      });
+
+      const fullExtractPromises: Promise<{ agent: string; sessions: Awaited<ReturnType<typeof extractClaudeSessions>> }>[] = [];
+      if (config.agents.includes("claude")) {
+        fullExtractPromises.push(
+          extractClaudeSessions().then((sessions) => ({ agent: "claude", sessions }))
+        );
+      }
+      if (config.agents.includes("codex")) {
+        fullExtractPromises.push(
+          extractCodexSessions().then((sessions) => ({ agent: "codex", sessions }))
+        );
+      }
+      const fullExtractions = await Promise.all(fullExtractPromises);
+      const fullSessions = fullExtractions.flatMap((e) => e.sessions);
+      const fullGroups = groupByProject(fullSessions);
+
+      for (const [path, sessions] of fullGroups) {
+        const alias = sessions[0].projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+        if (missingAliases.includes(alias) && !filteredGroups.has(path)) {
+          filteredGroups.set(path, sessions);
+        }
+      }
     }
   }
 
@@ -215,6 +263,13 @@ export async function runSync(
 
         processedProjects++;
         console.log(`[sync] Done: ${projectName}`);
+
+        onProgress?.({
+          stage: "完成项目",
+          detail: `${projectName} 同步完成 (${processedProjects}/${totalProjects})`,
+          progress: 30 + (processedProjects / totalProjects) * 50,
+          completedProject: alias,
+        });
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error(`[sync] Error processing ${projectName}:`, errMsg);
@@ -234,10 +289,9 @@ export async function runSync(
   // Run project processing with concurrency of 3
   await runWithConcurrency(projectFns, 3);
 
-  // ── Step 4: Update user profile ──
-  onProgress?.({ stage: "用户画像", detail: "更新用户画像...", progress: 85 });
-
-  if (userConversations.length > 0) {
+  // ── Step 4: Update user profile (skip for single-project sync) ──
+  if (!targetProjects && userConversations.length > 0) {
+    onProgress?.({ stage: "用户画像", detail: "更新用户画像...", progress: 85 });
     try {
       const existingProfile = await loadUserMemory();
       // Combine a sample of conversations (not all, to save tokens)

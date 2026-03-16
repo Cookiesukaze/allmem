@@ -1,6 +1,6 @@
 // Skill installer: register AllMem skill into AI tools
 
-import { exists, mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, writeTextFile, remove } from "@tauri-apps/plugin-fs";
 import { join, homeDir } from "@tauri-apps/api/path";
 
 const ALLMEM_SKILL_MD = `---
@@ -334,4 +334,46 @@ export async function isSkillInstalled(tool: "claude" | "codex"): Promise<boolea
     }
   }
   return false;
+}
+
+export async function uninstallSkillFromClaude(): Promise<boolean> {
+  const home = await homeDir();
+  const skillDirs = [
+    await join(home, ".claude", "skills", "allmem"),
+    await join(home, ".claude", "skills", "allmem-undo"),
+    await join(home, ".claude", "skills", "allmem-sync"),
+  ];
+
+  try {
+    for (const dir of skillDirs) {
+      if (await exists(dir)) {
+        await remove(dir, { recursive: true });
+      }
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to uninstall skill from Claude:", err);
+    return false;
+  }
+}
+
+export async function uninstallSkillFromCodex(): Promise<boolean> {
+  const home = await homeDir();
+  const instructionsPath = await join(home, ".codex", "instructions.md");
+
+  try {
+    const { readTextFile } = await import("@tauri-apps/plugin-fs");
+    const content = await readTextFile(instructionsPath);
+    // Remove the AllMem section
+    const cleaned = content.replace(/\n?# AllMem 记忆管理[\s\S]*?(?=\n# (?!AllMem)|$)/, "").trim();
+    if (cleaned) {
+      await writeTextFile(instructionsPath, cleaned);
+    } else {
+      await remove(instructionsPath);
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to uninstall skill from Codex:", err);
+    return false;
+  }
 }

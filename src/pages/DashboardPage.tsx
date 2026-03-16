@@ -34,6 +34,10 @@ export function DashboardPage() {
     try {
       const results = await runSync((progress) => {
         setSyncProgress(progress);
+        // Refresh project list incrementally as each project completes
+        if (progress.completedProject) {
+          listProjects().then(setProjects).catch(console.error);
+        }
       });
       setLastSyncResults(results);
       // Refresh project list

@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
-import { Download, CheckCircle2 } from "lucide-react";
+import { Download, CheckCircle2, RefreshCw, Trash2 } from "lucide-react";
 import { useAppStore } from "../store";
-import { loadConfig, saveConfig } from "../core/storage";
-import { installSkillToClaude, installSkillToCodex, isSkillInstalled } from "../core/installer";
+import { loadConfig, saveConfig, listProjects } from "../core/storage";
+import { installSkillToClaude, installSkillToCodex, isSkillInstalled, uninstallSkillFromClaude, uninstallSkillFromCodex } from "../core/installer";
 import { detectAgents } from "../core/detector";
 import { extractClaudeSessions, extractCodexSessions, groupByProject } from "../core/extractor";
 
 export function SettingsPage() {
   const { config, setConfig, detectedAgents, setDetectedAgents } = useAppStore();
   const [skillStatus, setSkillStatus] = useState<Record<string, boolean>>({});
+  const [installingSkill, setInstallingSkill] = useState<string | null>(null);
+  const [uninstallingSkill, setUninstallingSkill] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [detectedProjectAliases, setDetectedProjectAliases] = useState<string[]>([]);
+  const [allProjectAliases, setAllProjectAliases] = useState<string[]>([]);
 
   useEffect(() => {
     loadConfig().then(setConfig).catch(console.error);
@@ -27,19 +29,27 @@ export function SettingsPage() {
 
   const scanDetectedProjects = async () => {
     try {
+      // Get projects from conversation logs
       const [claudeSessions, codexSessions] = await Promise.all([
         extractClaudeSessions().catch(() => []),
         extractCodexSessions().catch(() => []),
       ]);
       const all = [...claudeSessions, ...codexSessions];
       const grouped = groupByProject(all);
-      const aliases: string[] = [];
+      const aliases = new Set<string>();
       for (const [, sessions] of grouped) {
         const name = sessions[0].projectName;
         const alias = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-        if (!aliases.includes(alias)) aliases.push(alias);
+        aliases.add(alias);
       }
-      setDetectedProjectAliases(aliases);
+
+      // Also include projects already in ~/.allmem/projects/
+      const existingProjects = await listProjects().catch(() => []);
+      for (const p of existingProjects) {
+        aliases.add(p.alias);
+      }
+
+      setAllProjectAliases([...aliases].sort());
     } catch {
       // ignore
     }
@@ -52,6 +62,7 @@ export function SettingsPage() {
   };
 
   const handleInstallSkill = async (tool: string) => {
+    setInstallingSkill(tool);
     let ok = false;
     if (tool === "claude") {
       ok = await installSkillToClaude();
@@ -61,6 +72,22 @@ export function SettingsPage() {
     if (ok) {
       setSkillStatus((prev) => ({ ...prev, [tool]: true }));
     }
+    // Brief flash to show completion
+    setTimeout(() => setInstallingSkill(null), 1000);
+  };
+
+  const handleUninstallSkill = async (tool: string) => {
+    setUninstallingSkill(tool);
+    let ok = false;
+    if (tool === "claude") {
+      ok = await uninstallSkillFromClaude();
+    } else if (tool === "codex") {
+      ok = await uninstallSkillFromCodex();
+    }
+    if (ok) {
+      setSkillStatus((prev) => ({ ...prev, [tool]: false }));
+    }
+    setTimeout(() => setUninstallingSkill(null), 1000);
   };
 
   const toggleSyncProject = (alias: string) => {
@@ -68,10 +95,10 @@ export function SettingsPage() {
     const updated = current.includes(alias)
       ? current.filter((a) => a !== alias)
       : [...current, alias];
-    setConfig({ ...config, syncProjects: updated });
+    setConfig({ ...config, syncAll: false, syncProjects: updated });
   };
 
-  const isSyncAll = !config.syncProjects || config.syncProjects.length === 0;
+  const isSyncAll = config.syncAll ?? true;
 
   return (
     <div className="p-6 space-y-6 overflow-y-auto h-full">
@@ -224,7 +251,7 @@ export function SettingsPage() {
       <div className="bg-card rounded-xl border border-border p-4 space-y-4">
         <h3 className="text-sm font-medium">同步项目选择</h3>
         <p className="text-xs text-muted-foreground">
-          选择需要同步的项目，不勾选则同步全部检测到的项目
+          勾选"全部同步"会同步所有检测到的项目；取消后可单独选择
         </p>
 
         <div className="space-y-1.5">
@@ -232,13 +259,12 @@ export function SettingsPage() {
             <input
               type="checkbox"
               checked={isSyncAll}
-              onChange={() => {
-                if (isSyncAll) {
-                  // Unchecking "all" → switch to selecting individual projects (start with all selected)
-                  setConfig({ ...config, syncProjects: [...detectedProjectAliases] });
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setConfig({ ...config, syncAll: true, syncProjects: [] });
                 } else {
-                  // Checking "all" → clear the list (empty = all)
-                  setConfig({ ...config, syncProjects: [] });
+                  // Switch to manual selection, start with all selected
+                  setConfig({ ...config, syncAll: false, syncProjects: [...allProjectAliases] });
                 }
               }}
               className="accent-primary"
@@ -246,15 +272,14 @@ export function SettingsPage() {
             <span className="text-sm font-medium">全部同步</span>
           </label>
 
-          {detectedProjectAliases.map((alias) => (
+          {!isSyncAll && allProjectAliases.map((alias) => (
             <label
               key={alias}
               className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary"
             >
               <input
                 type="checkbox"
-                checked={isSyncAll || (config.syncProjects ?? []).includes(alias)}
-                disabled={isSyncAll}
+                checked={(config.syncProjects ?? []).includes(alias)}
                 onChange={() => toggleSyncProject(alias)}
                 className="accent-primary"
               />
@@ -262,7 +287,15 @@ export function SettingsPage() {
             </label>
           ))}
 
-          {detectedProjectAliases.length === 0 && (
+          {isSyncAll && allProjectAliases.length > 0 && (
+            <div className="px-3 py-1.5">
+              <p className="text-xs text-muted-foreground">
+                当前将同步所有 {allProjectAliases.length} 个项目：{allProjectAliases.join("、")}
+              </p>
+            </div>
+          )}
+
+          {allProjectAliases.length === 0 && (
             <p className="text-xs text-muted-foreground py-2">
               未检测到项目，请先在概览页面执行一次同步
             </p>
@@ -345,7 +378,7 @@ export function SettingsPage() {
       <div className="bg-card rounded-xl border border-border p-4 space-y-4">
         <h3 className="text-sm font-medium">Skill 安装</h3>
         <p className="text-xs text-muted-foreground">
-          安装 /allmem 和 /allmem-undo skill 到你的AI工具中
+          安装 /allmem、/allmem-sync 和 /allmem-undo skill 到你的AI工具中
         </p>
 
         <div className="space-y-2">
@@ -357,20 +390,52 @@ export function SettingsPage() {
                 className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/50"
               >
                 <span className="text-sm">{agent.name}</span>
-                {skillStatus[agent.id] ? (
-                  <span className="flex items-center gap-1 text-xs text-green-600">
-                    <CheckCircle2 size={12} />
-                    已安装
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => handleInstallSkill(agent.id)}
-                    className="flex items-center gap-1 text-xs text-primary hover:opacity-80"
-                  >
-                    <Download size={12} />
-                    安装
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {skillStatus[agent.id] && installingSkill !== agent.id && uninstallingSkill !== agent.id && (
+                    <span className="flex items-center gap-1 text-xs text-green-600">
+                      <CheckCircle2 size={12} />
+                      已安装
+                    </span>
+                  )}
+                  {installingSkill === agent.id ? (
+                    <span className="flex items-center gap-1 text-xs text-green-600">
+                      <CheckCircle2 size={12} />
+                      {skillStatus[agent.id] ? "已更新!" : "已安装!"}
+                    </span>
+                  ) : uninstallingSkill === agent.id ? (
+                    <span className="flex items-center gap-1 text-xs text-red-500">
+                      已卸载!
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleInstallSkill(agent.id)}
+                        className="flex items-center gap-1 text-xs text-primary hover:opacity-80"
+                      >
+                        {skillStatus[agent.id] ? (
+                          <>
+                            <RefreshCw size={12} />
+                            重新安装
+                          </>
+                        ) : (
+                          <>
+                            <Download size={12} />
+                            安装
+                          </>
+                        )}
+                      </button>
+                      {skillStatus[agent.id] && (
+                        <button
+                          onClick={() => handleUninstallSkill(agent.id)}
+                          className="flex items-center gap-1 text-xs text-red-500 hover:opacity-80"
+                        >
+                          <Trash2 size={12} />
+                          卸载
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             ))}
         </div>
