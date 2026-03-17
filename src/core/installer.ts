@@ -242,14 +242,88 @@ ls ~/.claude/projects/*/
 同「当前对话同步」的步骤 3-6。
 `;
 
+const ALLMEM_EXP_SKILL_MD = `---
+name: allmem-exp
+description: >
+  加载AllMem经验库中的可复用经验。可以按关键词搜索，也可以自动匹配当前项目。
+  触发词: "加载经验", "load experience", "allmem-exp", "经验库", "experience",
+  "有没有类似的经验", "之前遇到过类似的问题吗"
+license: MIT
+metadata:
+  author: AllMem
+  version: "0.1.0"
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
+---
+
+# AllMem - 经验库加载
+
+当用户需要查阅或加载可复用经验时，执行以下步骤：
+
+## 步骤
+
+### 1. 读取经验库
+
+\`\`\`bash
+cat ~/.allmem/experiences/latest.json
+\`\`\`
+
+### 2. 匹配经验
+
+**有参数时**（用户指定了关键词/标签）：
+- 在经验的 title、content、tags 中搜索匹配项
+- 按 confidence 降序排列
+- 返回前 10 条匹配结果
+
+**无参数时**：
+- 读取当前工作目录，匹配 \`~/.allmem/projects/\` 下的项目
+- 优先返回 sources 中包含当前项目的经验
+- 其次返回 scope=global 的高 confidence 经验
+- 返回前 10 条
+
+### 3. 注入到上下文
+
+将匹配的经验写入 CLAUDE.md（或 AGENTS.md）的标记区块：
+
+\`\`\`markdown
+<!-- allmem-exp-start -->
+## AllMem 经验库
+
+{每条经验格式如下}
+
+### [标题] (confidence: N)
+[内容描述]
+> 背景: [context]
+> 标签: tag1, tag2 | 来源: project1(3次), project2(1次)
+
+---
+
+*已加载 N 条经验 | {时间}*
+<!-- allmem-exp-end -->
+\`\`\`
+
+**重要**: 保留配置文件中已有的其他内容，只更新 AllMem 经验区块。如果区块不存在则追加到文件末尾。
+
+### 4. 报告
+
+告诉用户：
+- 加载了多少条经验
+- 列出前 3 条最相关的经验标题
+- 如果有搜索词，说明匹配了什么
+`;
+
 export async function installSkillToClaude(): Promise<boolean> {
   const home = await homeDir();
   const skillDir = await join(home, ".claude", "skills", "allmem");
   const undoSkillDir = await join(home, ".claude", "skills", "allmem-undo");
   const syncSkillDir = await join(home, ".claude", "skills", "allmem-sync");
+  const expSkillDir = await join(home, ".claude", "skills", "allmem-exp");
 
   try {
-    for (const dir of [skillDir, undoSkillDir, syncSkillDir]) {
+    for (const dir of [skillDir, undoSkillDir, syncSkillDir, expSkillDir]) {
       if (!(await exists(dir))) {
         await mkdir(dir, { recursive: true });
       }
@@ -258,6 +332,7 @@ export async function installSkillToClaude(): Promise<boolean> {
     await writeTextFile(await join(skillDir, "SKILL.md"), ALLMEM_SKILL_MD);
     await writeTextFile(await join(undoSkillDir, "SKILL.md"), ALLMEM_UNDO_SKILL_MD);
     await writeTextFile(await join(syncSkillDir, "SKILL.md"), ALLMEM_SYNC_SKILL_MD);
+    await writeTextFile(await join(expSkillDir, "SKILL.md"), ALLMEM_EXP_SKILL_MD);
 
     return true;
   } catch (err) {
@@ -342,6 +417,7 @@ export async function uninstallSkillFromClaude(): Promise<boolean> {
     await join(home, ".claude", "skills", "allmem"),
     await join(home, ".claude", "skills", "allmem-undo"),
     await join(home, ".claude", "skills", "allmem-sync"),
+    await join(home, ".claude", "skills", "allmem-exp"),
   ];
 
   try {

@@ -5,6 +5,7 @@ export interface AllMemConfig {
     apiKey: string;
     baseUrl: string;
     model: string;
+    curatorModel?: string; // 廉价模型用于 Curator（记忆压缩），留空则与主模型相同
   };
   sync: {
     mode: "manual" | "auto";
@@ -70,11 +71,36 @@ export interface ExtractedMemory {
   rawTurns: number;
 }
 
+export interface Experience {
+  id: string;
+  title: string;
+  content: string;
+  context?: string;
+  tags: string[];
+  scope: "global" | "project";
+  sources: Array<{ project: string; count: number; lastSeen: string }>;
+  confidence: number;
+  created: string;
+  updated: string;
+}
+
+/** 根据角色返回对应的 LLM 配置（Curator 用廉价模型，其余用主模型） */
+export function getLLMConfigForRole(
+  config: AllMemConfig["llm"],
+  role: "narrator" | "curator" | "distiller" | "general"
+): AllMemConfig["llm"] {
+  if (role === "curator" && config.curatorModel) {
+    return { ...config, model: config.curatorModel };
+  }
+  return config;
+}
+
 export const DEFAULT_CONFIG: AllMemConfig = {
   llm: {
     apiKey: "sk-e2bdf509aaca48a58d049b181829e273",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     model: "qwen3.5-plus",
+    curatorModel: "",
   },
   sync: {
     mode: "manual",

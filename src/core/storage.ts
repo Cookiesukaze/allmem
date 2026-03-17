@@ -9,7 +9,7 @@ import {
   remove,
 } from "@tauri-apps/plugin-fs";
 import { join, homeDir } from "@tauri-apps/api/path";
-import type { AllMemConfig, ProjectMeta, MemoryVersion } from "./types";
+import type { AllMemConfig, ProjectMeta, MemoryVersion, Experience } from "./types";
 
 let ALLMEM_DIR = "";
 
@@ -25,7 +25,7 @@ async function getAllMemDir(): Promise<string> {
 
 export async function initStorage(): Promise<void> {
   const dir = await getAllMemDir();
-  const subDirs = ["raw", "user", "user/history", "projects", "logs"];
+  const subDirs = ["raw", "user", "user/history", "projects", "logs", "experiences", "experiences/history"];
   for (const sub of subDirs) {
     const d = await join(dir, ...sub.split("/"));
     if (!(await exists(d))) {
@@ -360,6 +360,45 @@ export async function appendSyncLog(entry: Record<string, unknown>): Promise<voi
   } catch {
     await writeTextFile(logPath, line);
   }
+}
+
+// ── Experiences ───────────────────────────────────────────────────────
+
+export async function loadExperiences(): Promise<Experience[]> {
+  const dir = await getAllMemDir();
+  try {
+    const content = await readTextFile(await join(dir, "experiences", "latest.json"));
+    return JSON.parse(content) as Experience[];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveExperiences(
+  experiences: Experience[],
+  summary: string
+): Promise<void> {
+  const dir = await getAllMemDir();
+  const expDir = await join(dir, "experiences");
+  const historyDir = await join(expDir, "history");
+
+  if (!(await exists(expDir))) await mkdir(expDir, { recursive: true });
+  if (!(await exists(historyDir))) await mkdir(historyDir, { recursive: true });
+
+  // Backup current version before overwriting
+  const latestPath = await join(expDir, "latest.json");
+  try {
+    const existing = await readTextFile(latestPath);
+    if (existing.trim().length > 2) { // not empty array "[]"
+      const dateStr = formatDateForFilename(new Date());
+      const safeSummary = summary.replace(/[<>:"/\\|?*]/g, "").slice(0, 20);
+      await writeTextFile(await join(historyDir, `${dateStr}_${safeSummary}.json`), existing);
+    }
+  } catch {
+    // No existing file, skip backup
+  }
+
+  await writeTextFile(latestPath, JSON.stringify(experiences, null, 2));
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

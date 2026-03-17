@@ -143,6 +143,21 @@ export function SettingsPage() {
               }
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
+            <p className="text-[10px] text-muted-foreground mt-0.5">主模型，用于因果链提取和经验蒸馏</p>
+          </div>
+
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Curator 模型 (廉价模型)</label>
+            <input
+              type="text"
+              value={config.llm.curatorModel ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, llm: { ...config.llm, curatorModel: e.target.value } })
+              }
+              placeholder="留空则与主模型相同"
+              className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
+            />
+            <p className="text-[10px] text-muted-foreground mt-0.5">用于记忆压缩和摘要，可用更便宜的模型节省 token</p>
           </div>
         </div>
       </div>

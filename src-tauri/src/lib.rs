@@ -1,5 +1,4 @@
 // AllMem Tauri backend v2
-use tauri::Manager;
 use std::process::Command;
 
 #[tauri::command]
@@ -36,19 +35,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![open_folder])
-        .setup(|app| {
-            let window = app.get_webview_window("main").unwrap();
-
-            #[cfg(target_os = "windows")]
-            {
-                use window_vibrancy::{apply_mica, apply_acrylic};
-                if apply_mica(&window, Some(true)).is_err() {
-                    let _ = apply_acrylic(&window, Some((18, 18, 18, 200)));
-                }
-            }
-
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

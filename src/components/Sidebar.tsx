@@ -1,10 +1,11 @@
-import { LayoutDashboard, FolderOpen, User, Settings, MessageSquare } from "lucide-react";
+import { LayoutDashboard, FolderOpen, User, Settings, MessageSquare, Lightbulb } from "lucide-react";
 import { useAppStore } from "../store";
 import { clsx } from "clsx";
 
 const NAV_ITEMS = [
   { id: "dashboard" as const, label: "概览", icon: LayoutDashboard },
   { id: "projects" as const, label: "项目", icon: FolderOpen },
+  { id: "experiences" as const, label: "经验", icon: Lightbulb },
   { id: "chat" as const, label: "对话", icon: MessageSquare },
   { id: "user" as const, label: "用户", icon: User },
   { id: "settings" as const, label: "设置", icon: Settings },

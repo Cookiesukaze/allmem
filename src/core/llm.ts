@@ -1,6 +1,6 @@
 // LLM client: call ChatAnywhere API (gpt-4o-mini)
 
-import type { AllMemConfig } from "./types";
+import type { AllMemConfig, Experience } from "./types";
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -282,4 +282,169 @@ ${rawConversation.slice(0, 3000)}
     [{ role: "user", content: descPrompt }],
     config
   );
+}
+
+/**
+ * Narrator: extract causal chains from conversation.
+ * Output: structured problem → attempts (including failures) → outcome narratives.
+ * Uses the good model.
+ */
+export async function narrateCausalChains(
+  conversationText: string,
+  projectName: string,
+  config: AllMemConfig["llm"]
+): Promise<string> {
+  const systemPrompt = `你是一个因果链叙事助手。你的任务是从AI对话记录中提取「因果链」——即 问题→尝试→结果 的完整故事。
+
+输出格式（Markdown）:
+
+对于对话中每一个有意义的问题/任务，提取一条因果链：
+
+### [简短标题]
+- **问题**: 用户遇到了什么问题 / 想做什么
+- **尝试**: 做了哪些尝试（包括失败的，用"✗"标记失败，"✓"标记成功）
+- **结果**: 最终怎么解决的 / 当前状态（已解决/未解决/搁置）
+- **关键信息**: 涉及的技术细节、文件路径、配置项等
+
+规则:
+1. 每个因果链必须有完整的 问题→尝试→结果 结构，不要只列要点
+2. 保留失败的尝试，这些往往更有价值
+3. 包含具体的技术细节（错误信息、解决方案、代码片段关键部分）
+4. 如果对话中没有明确的因果链（纯闲聊/简单问答），输出"无因果链"
+5. 通常3-8个因果链，不超过10个
+6. 每个因果链总共不超过150字`;
+
+  const userPrompt = `项目: ${projectName}\n\n对话记录:\n${conversationText}\n\n请提取因果链。`;
+
+  return callLLM(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    config
+  );
+}
+
+/**
+ * Distiller: extract reusable experiences from causal chains.
+ * Compares with existing experiences to deduplicate and reinforce.
+ * Uses the good model.
+ */
+export async function distillExperiences(
+  causalNarrative: string,
+  projectAlias: string,
+  existingExperiences: Experience[],
+  config: AllMemConfig["llm"]
+): Promise<{ newExperiences: Omit<Experience, "id" | "created" | "updated" | "confidence" | "sources">[]; reinforced: string[] }> {
+  const existingSummary = existingExperiences.length > 0
+    ? existingExperiences.map(e => `[${e.id}] ${e.title}: ${e.content} (标签: ${e.tags.join(",")})`).join("\n")
+    : "（暂无已有经验）";
+
+  const systemPrompt = `你是一个经验蒸馏专家。从因果链叙事中判断是否存在值得记录的可复用经验。
+
+已有经验列表:
+${existingSummary}
+
+你需要输出严格的JSON（不要markdown代码块），格式如下:
+{
+  "new": [
+    {
+      "title": "一句话标题",
+      "content": "2-3句描述，包含因果关系（因为X所以Y，解决方法是Z）",
+      "context": "从什么场景学到的",
+      "tags": ["标签1", "标签2"],
+      "scope": "global"
+    }
+  ],
+  "reinforced": ["exp-xxx", "exp-yyy"]
+}
+
+一条信息值得成为经验，当且仅当：
+1. 可迁移：换一个项目遇到类似场景仍然适用
+2. 非显然：不是任何开发者都天然知道的常识
+3. 有因果：不只是"做了X"，而是"因为Y所以应该做X"
+
+不应该成为经验的：
+- 项目特有的业务逻辑 → 这属于项目记忆
+- 一次性的debug过程（端口冲突等） → 没有迁移价值
+- 常识性的东西 → AI本来就知道
+- 纯事实记录 → 这是记忆不是经验
+
+规则:
+1. "new" 只包含已有经验中没有的全新经验
+2. "reinforced" 列出已有经验中被这次因果链再次印证的经验ID
+3. scope=global: 跨项目通用; scope=project: 仅限当前项目类型
+4. 标签用英文小写，2-4个
+5. 大多数对话不会产生新经验，这是正常的。如果没有值得记录的，返回 {"new": [], "reinforced": []}
+6. 每次最多提取3条新经验`;
+
+  const userPrompt = `项目: ${projectAlias}\n\n因果链:\n${causalNarrative}\n\n请提取可复用经验。`;
+
+  const raw = await callLLM(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    config
+  );
+
+  try {
+    const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    return {
+      newExperiences: parsed.new ?? [],
+      reinforced: parsed.reinforced ?? [],
+    };
+  } catch {
+    console.warn("[distiller] Failed to parse LLM response as JSON:", raw);
+    return { newExperiences: [], reinforced: [] };
+  }
+}
+
+/**
+ * Merge distilled experiences into the existing experience store.
+ * Pure function, no LLM calls.
+ */
+export function mergeExperiences(
+  existing: Experience[],
+  distilled: { newExperiences: Omit<Experience, "id" | "created" | "updated" | "confidence" | "sources">[]; reinforced: string[] },
+  projectAlias: string
+): Experience[] {
+  const now = new Date().toISOString();
+  const updated = existing.map(e => ({ ...e })); // shallow clone
+
+  // Reinforce existing experiences
+  for (const id of distilled.reinforced) {
+    const exp = updated.find(e => e.id === id);
+    if (exp) {
+      exp.confidence += 1;
+      exp.updated = now;
+      const src = exp.sources.find(s => s.project === projectAlias);
+      if (src) {
+        src.count++;
+        src.lastSeen = now;
+      } else {
+        exp.sources.push({ project: projectAlias, count: 1, lastSeen: now });
+      }
+    }
+  }
+
+  // Add new experiences
+  for (const ne of distilled.newExperiences) {
+    const id = `exp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    updated.push({
+      id,
+      title: ne.title,
+      content: ne.content,
+      context: ne.context,
+      tags: ne.tags ?? [],
+      scope: (ne.scope as "global" | "project") ?? "global",
+      sources: [{ project: projectAlias, count: 1, lastSeen: now }],
+      confidence: 1,
+      created: now,
+      updated: now,
+    });
+  }
+
+  return updated;
 }

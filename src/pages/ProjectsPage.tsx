@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ChevronLeft, Clock, RotateCcw, Save, Plus, Upload, FileText,
-  Globe, Trash2, FolderOpen, Pencil, RefreshCw,
+  Globe, Trash2, FolderOpen, Pencil, RefreshCw, Lightbulb,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { MarkdownView } from "../components/MarkdownView";
@@ -19,6 +19,7 @@ import {
   listProjects,
   deleteProject,
   deleteVersion,
+  loadExperiences,
 } from "../core/storage";
 import { join, homeDir } from "@tauri-apps/api/path";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -26,7 +27,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { runSync } from "../core/sync";
 import { loadConfig } from "../core/storage";
-import type { MemoryVersion, ProjectMeta } from "../core/types";
+import type { MemoryVersion, ProjectMeta, Experience } from "../core/types";
 
 export function ProjectsPage() {
   const { projects, setProjects, selectedProject, setSelectedProject, setConfig, projectSyncing: syncing, projectSyncStatus: syncStatus, setProjectSyncing: setSyncing, setProjectSyncStatus: setSyncStatus } = useAppStore();
@@ -45,6 +46,7 @@ export function ProjectsPage() {
   const [editingInstructions, setEditingInstructions] = useState(false);
   const [instructionsDraft, setInstructionsDraft] = useState("");
   const [recentMemory, setRecentMemory] = useState<string>("");
+  const [projectExperiences, setProjectExperiences] = useState<Experience[]>([]);
 
   useEffect(() => {
     if (selectedProject) {
@@ -56,6 +58,9 @@ export function ProjectsPage() {
         setMeta(m);
       });
       loadProjectInstructions(selectedProject).then(setProjectInstructions);
+      loadExperiences().then(exps => {
+        setProjectExperiences(exps.filter(e => e.sources.some(s => s.project === selectedProject)));
+      }).catch(console.error);
       loadProjectVersions();
     }
   }, [selectedProject]);
@@ -615,6 +620,44 @@ export function ProjectsPage() {
           </p>
         )}
       </div>
+
+      {/* Related Experiences */}
+      {projectExperiences.length > 0 && (
+        <div className="bg-card rounded-xl border border-purple-500/20 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Lightbulb size={14} className="text-purple-500" />
+            <h3 className="text-sm font-medium">相关经验</h3>
+            <span className="text-[10px] text-muted-foreground">
+              ({projectExperiences.length} 条)
+            </span>
+          </div>
+          <div className="space-y-2">
+            {projectExperiences
+              .sort((a, b) => b.confidence - a.confidence)
+              .map((exp) => (
+                <div key={exp.id} className="py-2 px-3 rounded-lg bg-secondary/50">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium">{exp.title}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      confidence: {exp.confidence}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{exp.content}</p>
+                  <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                    {exp.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* Memory Content */}
       <div className="bg-card rounded-xl border border-border p-4">

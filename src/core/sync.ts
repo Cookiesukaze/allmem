@@ -1,8 +1,10 @@
 // Sync engine: orchestrate multi-agent extraction and archiving
 
 import { extractClaudeSessions, extractCodexSessions, turnsToText, groupByProject } from "./extractor";
-import { summarizeSingleConversation, compactMemory, extractUserInfo, generateVersionSummary, generateProjectDescription } from "./llm";
+import { summarizeSingleConversation, compactMemory, extractUserInfo, generateVersionSummary, generateProjectDescription, narrateCausalChains, distillExperiences, mergeExperiences } from "./llm";
 import { redactSensitive } from "./privacy";
+import { getLLMConfigForRole } from "./types";
+import type { Experience } from "./types";
 import {
   loadConfig,
   saveConfig,
@@ -18,6 +20,8 @@ import {
   countRecentEntries,
   appendSyncLog,
   initStorage,
+  loadExperiences,
+  saveExperiences,
 } from "./storage";
 import type { ProjectMeta, SyncResult } from "./types";
 
@@ -157,6 +161,10 @@ export async function runSync(
   // ── Step 3: Process each project (with concurrency limit) ──
   const userConversations: string[] = [];
   const projectFns: (() => Promise<void>)[] = [];
+  const allDistilledResults: Array<{
+    alias: string;
+    distilled: { newExperiences: Omit<Experience, "id" | "created" | "updated" | "confidence" | "sources">[]; reinforced: string[] };
+  }> = [];
 
   for (const [projectPath, sessions] of filteredGroups) {
     const projectName = sessions[0].projectName;
@@ -182,55 +190,80 @@ export async function runSync(
         const existingMemory = await loadProjectMemory(alias);
         const isUpdate = !!existingMemory;
 
+        // ── Agent 1: Narrator (good model, sequential) ──
         onProgress?.({
-          stage: isUpdate ? "更新" : "整理",
-          detail: `${isUpdate ? "更新" : "整理"} ${projectName} 的记忆... (${processedProjects + 1}/${totalProjects})`,
+          stage: "叙事",
+          detail: `提取 ${projectName} 的因果链... (${processedProjects + 1}/${totalProjects})`,
           progress: 30 + (processedProjects / totalProjects) * 50,
         });
 
-        console.log(`[sync] ${isUpdate ? "Updating" : "Creating"} project: ${projectName} (${allTurns.length} turns)`);
+        const goodConfig = getLLMConfigForRole(config.llm, "narrator");
+        const causalNarrative = await narrateCausalChains(conversationText, projectName, goodConfig);
+        const hasCausalChains = causalNarrative.trim() !== "无因果链";
 
-        // ── WAL mode: lightweight summary → append to recent.md ──
+        console.log(`[narrator] ${projectName}: ${hasCausalChains ? "extracted causal chains" : "no causal chains"}`);
+
+        // ── Agent 2 + 3: Curator + Distiller (parallel) ──
+        onProgress?.({
+          stage: isUpdate ? "更新" : "整理",
+          detail: `${isUpdate ? "更新" : "整理"} ${projectName} 的记忆... (${processedProjects + 1}/${totalProjects})`,
+          progress: 30 + (processedProjects / totalProjects) * 50 + 3,
+        });
+
+        const cheapConfig = getLLMConfigForRole(config.llm, "curator");
         const sessionSource = sessions[0]?.sessionId?.includes("codex") ? "codex" : "claude";
-        const summary = await summarizeSingleConversation(
-          conversationText,
-          projectName,
-          config.llm
-        );
-        await appendProjectRecent(alias, summary, sessionSource);
 
-        // ── Check if compaction is needed ──
-        const COMPACTION_THRESHOLD = config.sync.compactionThreshold ?? 10;
-        const recentCount = await countRecentEntries(alias);
+        // Curator task: summarize → WAL → compaction
+        const curatorTask = async () => {
+          // Feed causal narrative to Curator if available, else raw conversation
+          const inputText = hasCausalChains ? causalNarrative : conversationText;
+          const summary = await summarizeSingleConversation(inputText, projectName, cheapConfig);
+          await appendProjectRecent(alias, summary, sessionSource);
 
-        if (recentCount >= COMPACTION_THRESHOLD || !existingMemory) {
-          // Compaction: merge recent.md into latest.md
-          onProgress?.({
-            stage: "压缩",
-            detail: `压缩 ${projectName} 的记忆 (${recentCount} 条近期记录)...`,
-            progress: 30 + (processedProjects / totalProjects) * 50 + 5,
-          });
+          const COMPACTION_THRESHOLD = config.sync.compactionThreshold ?? 10;
+          const recentCount = await countRecentEntries(alias);
 
-          const recentContent = await loadProjectRecent(alias);
-          const newMemory = await compactMemory(
-            existingMemory,
-            recentContent ?? summary,
-            projectName,
-            config.llm
-          );
+          if (recentCount >= COMPACTION_THRESHOLD || !existingMemory) {
+            onProgress?.({
+              stage: "压缩",
+              detail: `压缩 ${projectName} 的记忆 (${recentCount} 条近期记录)...`,
+              progress: 30 + (processedProjects / totalProjects) * 50 + 5,
+            });
 
-          const versionSummary = await generateVersionSummary(
-            existingMemory,
-            newMemory,
-            config.llm
-          );
-          await saveProjectMemory(alias, newMemory, versionSummary);
-          await clearProjectRecent(alias);
+            const recentContent = await loadProjectRecent(alias);
+            const newMemory = await compactMemory(
+              existingMemory,
+              recentContent ?? summary,
+              projectName,
+              cheapConfig
+            );
 
-          console.log(`[sync] Compacted: ${projectName} (${recentCount} entries merged)`);
-        } else {
-          console.log(`[sync] WAL append: ${projectName} (${recentCount}/${COMPACTION_THRESHOLD} entries)`);
-        }
+            const versionSummary = await generateVersionSummary(existingMemory, newMemory, cheapConfig);
+            await saveProjectMemory(alias, newMemory, versionSummary);
+            await clearProjectRecent(alias);
+
+            console.log(`[curator] Compacted: ${projectName} (${recentCount} entries merged)`);
+          } else {
+            console.log(`[curator] WAL append: ${projectName} (${recentCount}/${COMPACTION_THRESHOLD} entries)`);
+          }
+        };
+
+        // Distiller task: extract experiences (only if causal chains found)
+        const distillerTask = async () => {
+          if (!hasCausalChains) return;
+          const distillerConfig = getLLMConfigForRole(config.llm, "distiller");
+          const existingExps = await loadExperiences();
+          const distilled = await distillExperiences(causalNarrative, alias, existingExps, distillerConfig);
+
+          console.log(`[distiller] ${projectName}: ${distilled.newExperiences.length} new, ${distilled.reinforced.length} reinforced`);
+
+          if (distilled.newExperiences.length > 0 || distilled.reinforced.length > 0) {
+            allDistilledResults.push({ alias, distilled });
+          }
+        };
+
+        // Run Curator and Distiller in parallel
+        await Promise.all([curatorTask(), distillerTask()]);
 
         // Save/update project meta
         const existingMeta = await loadProjectMeta(alias);
@@ -288,6 +321,17 @@ export async function runSync(
 
   // Run project processing with concurrency of 3
   await runWithConcurrency(projectFns, 3);
+
+  // ── Step 3.5: Batch merge all distilled experiences ──
+  if (allDistilledResults.length > 0) {
+    onProgress?.({ stage: "蒸馏", detail: `合并 ${allDistilledResults.length} 个项目的经验...`, progress: 82 });
+    let experiences = await loadExperiences();
+    for (const { alias, distilled } of allDistilledResults) {
+      experiences = mergeExperiences(experiences, distilled, alias);
+    }
+    await saveExperiences(experiences, `同步蒸馏${allDistilledResults.length}项`);
+    console.log(`[distiller] Saved ${experiences.length} total experiences`);
+  }
 
   // ── Step 4: Update user profile (skip for single-project sync) ──
   if (!targetProjects && userConversations.length > 0) {

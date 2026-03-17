@@ -3,7 +3,7 @@
 跨 Vibe Coder 又不只是 Vibe Coder 的统一记忆管理。
 
 作者痛恨和 AI 沟通的每一天。
-你在 Claude Code 里讨论了半天架构，换到 Codex 又得从头说起；同一个项目开了一亿个对话，之前踩过的坑 AI 全忘了。AllMem 可使用低廉的过去的LLM为你管理记忆，自动提取、整理、归档你在各个 AI 工具中的对话记忆，让 AI 从第一句话就了解你和你的项目。
+你在 Claude Code 里讨论了半天架构，换到 Codex 又得从头说起；同一个项目开了一亿个对话，之前踩过的坑 AI 全忘了。AllMem 可使用低廉的过去的LLM专职为你管理记忆，自动提取、整理、归档你在各个 AI 工具中的对话记忆，让 AI 从第一句话就了解你和你的项目。
 
 ## 核心功能
 
@@ -41,7 +41,7 @@ npx tauri dev
 
 Tauri 2 (Rust) + React + TypeScript + Tailwind CSS + Zustand
 
-LLM 默认使用阿里云 DashScope qwen3.5-plus（OpenAI 兼容接口，可替换）
+LLM 使用OpenAI 兼容接口
 
 ## 未来方向
 

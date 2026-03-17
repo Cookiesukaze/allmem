@@ -1,8 +1,8 @@
-import { useEffect } from "react";
-import { RefreshCw, FolderOpen, Clock, CheckCircle2, AlertCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { RefreshCw, FolderOpen, Clock, CheckCircle2, AlertCircle, Lightbulb } from "lucide-react";
 import { useAppStore } from "../store";
 import { runSync } from "../core/sync";
-import { listProjects, loadConfig } from "../core/storage";
+import { listProjects, loadConfig, loadExperiences } from "../core/storage";
 import { detectAgents } from "../core/detector";
 
 export function DashboardPage() {
@@ -19,12 +19,14 @@ export function DashboardPage() {
     config,
     setConfig,
   } = useAppStore();
+  const [expCount, setExpCount] = useState(0);
 
   useEffect(() => {
     // Load initial data
     listProjects().then(setProjects).catch(console.error);
     detectAgents().then(setDetectedAgents).catch(console.error);
     loadConfig().then(setConfig).catch(console.error);
+    loadExperiences().then(exps => setExpCount(exps.length)).catch(console.error);
   }, []);
 
   const handleSync = async () => {
@@ -34,9 +36,10 @@ export function DashboardPage() {
     try {
       const results = await runSync((progress) => {
         setSyncProgress(progress);
-        // Refresh project list incrementally as each project completes
+        // Refresh project list and experience count incrementally as each project completes
         if (progress.completedProject) {
           listProjects().then(setProjects).catch(console.error);
+          loadExperiences().then(exps => setExpCount(exps.length)).catch(console.error);
         }
       });
       setLastSyncResults(results);
@@ -46,6 +49,8 @@ export function DashboardPage() {
       // Refresh config to update lastSyncTimestamp
       const updatedConfig = await loadConfig();
       setConfig(updatedConfig);
+      // Refresh experience count
+      loadExperiences().then(exps => setExpCount(exps.length)).catch(console.error);
       // Show errors if any
       const errors = results.flatMap((r) => r.errors);
       if (errors.length > 0) {
@@ -101,13 +106,21 @@ export function DashboardPage() {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <div className="bg-card rounded-xl border border-border p-4">
           <div className="flex items-center gap-2 text-muted-foreground mb-2">
             <FolderOpen size={14} />
             <span className="text-xs font-medium">项目数</span>
           </div>
           <p className="text-2xl font-semibold">{projects.length}</p>
+        </div>
+
+        <div className="bg-card rounded-xl border border-border p-4">
+          <div className="flex items-center gap-2 text-muted-foreground mb-2">
+            <Lightbulb size={14} />
+            <span className="text-xs font-medium">经验数</span>
+          </div>
+          <p className="text-2xl font-semibold">{expCount}</p>
         </div>
 
         <div className="bg-card rounded-xl border border-border p-4">

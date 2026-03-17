@@ -9,7 +9,7 @@ interface ChatMessage {
 
 interface AppState {
   // Navigation
-  activePage: "dashboard" | "projects" | "user" | "settings" | "chat";
+  activePage: "dashboard" | "projects" | "experiences" | "user" | "settings" | "chat";
   setActivePage: (page: AppState["activePage"]) => void;
 
   // Selected project
