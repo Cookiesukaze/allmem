@@ -1,4 +1,4 @@
-// LLM client: call ChatAnywhere API (gpt-4o-mini)
+// LLM client: OpenAI-compatible API
 
 import type { AllMemConfig, Experience } from "./types";
 

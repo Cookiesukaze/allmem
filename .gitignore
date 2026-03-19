@@ -21,3 +21,6 @@ Thumbs.db
 # Environment / secrets
 .env
 .env.*
+
+# Internal dev docs
+CLAUDE.md

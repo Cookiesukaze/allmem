@@ -98,9 +98,9 @@ export function getLLMConfigForRole(
 
 export const DEFAULT_CONFIG: AllMemConfig = {
   llm: {
-    apiKey: "sk-e2bdf509aaca48a58d049b181829e273",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen3.5-plus",
+    apiKey: "",
+    baseUrl: "",
+    model: "",
     curatorModel: "",
   },
   sync: {

@@ -1,4 +1,5 @@
-import { LayoutDashboard, FolderOpen, User, Settings, MessageSquare, Lightbulb } from "lucide-react";
+import { LayoutDashboard, FolderOpen, User, Settings, MessageSquare, Lightbulb, Github } from "lucide-react";
+import { open } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "../store";
 import { clsx } from "clsx";
 
@@ -34,7 +35,14 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="p-3 border-t border-border">
+      <div className="p-3 border-t border-border space-y-1.5">
+        <button
+          onClick={() => open("https://github.com/Cookiesukaze/allmem")}
+          className="w-full flex items-center justify-center gap-1.5 px-2 py-1 text-[10px] text-muted-foreground/60 hover:text-primary rounded transition-colors"
+        >
+          <Github size={12} />
+          <span>GitHub</span>
+        </button>
         <p className="text-[10px] text-muted-foreground/60 text-center">
           AllMem v0.1.0
         </p>

@@ -1,8 +1,12 @@
 {
   "name": "allmem",
-  "private": true,
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Cookiesukaze/allmem.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
