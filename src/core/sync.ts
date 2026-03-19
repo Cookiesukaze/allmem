@@ -248,9 +248,9 @@ export async function runSync(
           }
         };
 
-        // Distiller task: extract experiences (only if causal chains found)
+        // Distiller task: extract experiences (only if causal chains found AND distiller enabled)
         const distillerTask = async () => {
-          if (!hasCausalChains) return;
+          if (!hasCausalChains || !config.enableDistiller) return;
           const distillerConfig = getLLMConfigForRole(config.llm, "distiller");
           const existingExps = await loadExperiences();
           const distilled = await distillExperiences(causalNarrative, alias, existingExps, distillerConfig);

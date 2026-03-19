@@ -318,6 +318,29 @@ export function SettingsPage() {
         </div>
       </div>
 
+      {/* Experience Distiller */}
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium">经验蒸馏</h3>
+            <p className="text-xs text-muted-foreground">
+              同步时自动从因果链中提取可复用经验（实验性功能，会额外消耗 LLM token）
+            </p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config.enableDistiller ?? false}
+              onChange={(e) =>
+                setConfig({ ...config, enableDistiller: e.target.checked })
+              }
+              className="accent-primary"
+            />
+            <span className="text-xs">启用</span>
+          </label>
+        </div>
+      </div>
+
       {/* Privacy Protection */}
       <div className="bg-card rounded-xl border border-border p-4 space-y-4">
         <div className="flex items-center justify-between">

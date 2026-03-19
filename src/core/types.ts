@@ -18,6 +18,7 @@ export interface AllMemConfig {
   agents: string[];          // enabled agent ids: ["claude", "codex"]
   syncAll: boolean;            // true = sync all detected projects, false = only syncProjects
   syncProjects: string[];    // project aliases to sync (only used when syncAll=false)
+  enableDistiller: boolean;    // 是否启用经验蒸馏（新功能，默认关闭）
   privacy: {
     enabled: boolean;
     sensitiveWords: string[];  // words to redact before LLM processing and in stored memories
@@ -112,6 +113,7 @@ export const DEFAULT_CONFIG: AllMemConfig = {
   agents: ["claude", "codex"],
   syncAll: true,
   syncProjects: [],
+  enableDistiller: false,
   privacy: {
     enabled: false,
     sensitiveWords: [],
