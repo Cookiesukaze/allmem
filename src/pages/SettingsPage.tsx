@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, CheckCircle2, RefreshCw, Trash2 } from "lucide-react";
 import { useAppStore } from "../store";
 import { loadConfig, saveConfig, listProjects } from "../core/storage";
@@ -13,12 +13,50 @@ export function SettingsPage() {
   const [uninstallingSkill, setUninstallingSkill] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [allProjectAliases, setAllProjectAliases] = useState<string[]>([]);
+  const [lastManualSelection, setLastManualSelection] = useState<string[] | null>(null);
+
+  const [llmDirty, setLlmDirty] = useState(false);
+  const [syncParamsDirty, setSyncParamsDirty] = useState(false);
+  const [privacyDirty, setPrivacyDirty] = useState(false);
+
+  const [showLLMSavedHint, setShowLLMSavedHint] = useState(false);
+  const [showSyncParamsSavedHint, setShowSyncParamsSavedHint] = useState(false);
+  const [showPrivacySavedHint, setShowPrivacySavedHint] = useState(false);
+
+  const [syncSelectionDirty, setSyncSelectionDirty] = useState(false);
+  const [showSyncSavedHint, setShowSyncSavedHint] = useState(false);
+
+  const [skillToast, setSkillToast] = useState<{ tool: string; message: string } | null>(null);
+  const skillToastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    loadConfig().then(setConfig).catch(console.error);
+    loadConfig()
+      .then((loaded) => {
+        setConfig(loaded);
+        setLlmDirty(false);
+        setSyncParamsDirty(false);
+        setPrivacyDirty(false);
+        setSyncSelectionDirty(false);
+        setShowLLMSavedHint(false);
+        setShowSyncParamsSavedHint(false);
+        setShowPrivacySavedHint(false);
+        setShowSyncSavedHint(false);
+        // Only cache manual selection when we are currently in manual mode.
+        // If syncAll=true, treat cache as missing so we can fallback to "all selected".
+        setLastManualSelection(loaded.syncAll ? null : (loaded.syncProjects ?? null));
+      })
+      .catch(console.error);
     detectAgents().then(setDetectedAgents).catch(console.error);
     checkSkillStatus();
     scanDetectedProjects();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (skillToastTimerRef.current) {
+        window.clearTimeout(skillToastTimerRef.current);
+      }
+    };
   }, []);
 
   const checkSkillStatus = async () => {
@@ -56,8 +94,34 @@ export function SettingsPage() {
   };
 
   const handleSave = async () => {
+    const shouldShowSyncHint = syncSelectionDirty;
+    const shouldShowLLMHint = llmDirty;
+    const shouldShowSyncParamsHint = syncParamsDirty;
+    const shouldShowPrivacyHint = privacyDirty;
     setSaving(true);
     await saveConfig(config);
+
+    setLlmDirty(false);
+    setSyncParamsDirty(false);
+    setPrivacyDirty(false);
+    setSyncSelectionDirty(false);
+
+    if (shouldShowSyncHint) {
+      setShowSyncSavedHint(true);
+      setTimeout(() => setShowSyncSavedHint(false), 3000);
+    }
+    if (shouldShowLLMHint) {
+      setShowLLMSavedHint(true);
+      setTimeout(() => setShowLLMSavedHint(false), 3000);
+    }
+    if (shouldShowSyncParamsHint) {
+      setShowSyncParamsSavedHint(true);
+      setTimeout(() => setShowSyncParamsSavedHint(false), 3000);
+    }
+    if (shouldShowPrivacyHint) {
+      setShowPrivacySavedHint(true);
+      setTimeout(() => setShowPrivacySavedHint(false), 3000);
+    }
     setTimeout(() => setSaving(false), 1000);
   };
 
@@ -70,7 +134,16 @@ export function SettingsPage() {
       ok = await installSkillToCodex();
     }
     if (ok) {
+      const alreadyInstalled = !!skillStatus[tool];
       setSkillStatus((prev) => ({ ...prev, [tool]: true }));
+      setSkillToast({
+        tool,
+        message: tool === "claude" ? (alreadyInstalled ? "Claude skill 已更新!" : "Claude skill 已安装!") : alreadyInstalled ? "Codex skill 已更新!" : "Codex skill 已安装!",
+      });
+      if (skillToastTimerRef.current) {
+        window.clearTimeout(skillToastTimerRef.current);
+      }
+      skillToastTimerRef.current = window.setTimeout(() => setSkillToast(null), 2500);
     }
     // Brief flash to show completion
     setTimeout(() => setInstallingSkill(null), 1000);
@@ -86,6 +159,14 @@ export function SettingsPage() {
     }
     if (ok) {
       setSkillStatus((prev) => ({ ...prev, [tool]: false }));
+      setSkillToast({
+        tool,
+        message: tool === "claude" ? "Claude skill 已卸载!" : "Codex skill 已卸载!",
+      });
+      if (skillToastTimerRef.current) {
+        window.clearTimeout(skillToastTimerRef.current);
+      }
+      skillToastTimerRef.current = window.setTimeout(() => setSkillToast(null), 2500);
     }
     setTimeout(() => setUninstallingSkill(null), 1000);
   };
@@ -95,6 +176,9 @@ export function SettingsPage() {
     const updated = current.includes(alias)
       ? current.filter((a) => a !== alias)
       : [...current, alias];
+    setLastManualSelection(updated);
+    setShowSyncSavedHint(false);
+    setSyncSelectionDirty(true);
     setConfig({ ...config, syncAll: false, syncProjects: updated });
   };
 
@@ -105,8 +189,19 @@ export function SettingsPage() {
       <h1 className="text-xl font-semibold">设置</h1>
 
       {/* LLM Config */}
-      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4 relative">
+        {llmDirty && (
+          <div className="absolute top-3 right-3 flex items-center gap-2 text-amber-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <span className="text-xs">有改动未保存</span>
+          </div>
+        )}
         <h3 className="text-sm font-medium">LLM 配置</h3>
+        {showLLMSavedHint && (
+          <p className="text-xs text-green-600/80">
+            LLM 配置已更新，下次同步/注入会使用新配置。
+          </p>
+        )}
 
         <div className="space-y-3">
           <div>
@@ -114,9 +209,11 @@ export function SettingsPage() {
             <input
               type="text"
               value={config.llm.baseUrl}
-              onChange={(e) =>
-                setConfig({ ...config, llm: { ...config.llm, baseUrl: e.target.value } })
-              }
+              onChange={(e) => {
+                setConfig({ ...config, llm: { ...config.llm, baseUrl: e.target.value } });
+                setLlmDirty(true);
+                setShowLLMSavedHint(false);
+              }}
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
           </div>
@@ -126,9 +223,11 @@ export function SettingsPage() {
             <input
               type="password"
               value={config.llm.apiKey}
-              onChange={(e) =>
-                setConfig({ ...config, llm: { ...config.llm, apiKey: e.target.value } })
-              }
+              onChange={(e) => {
+                setConfig({ ...config, llm: { ...config.llm, apiKey: e.target.value } });
+                setLlmDirty(true);
+                setShowLLMSavedHint(false);
+              }}
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
           </div>
@@ -138,9 +237,11 @@ export function SettingsPage() {
             <input
               type="text"
               value={config.llm.model}
-              onChange={(e) =>
-                setConfig({ ...config, llm: { ...config.llm, model: e.target.value } })
-              }
+              onChange={(e) => {
+                setConfig({ ...config, llm: { ...config.llm, model: e.target.value } });
+                setLlmDirty(true);
+                setShowLLMSavedHint(false);
+              }}
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
             <p className="text-[10px] text-muted-foreground mt-0.5">主模型，用于因果链提取和经验蒸馏</p>
@@ -151,9 +252,11 @@ export function SettingsPage() {
             <input
               type="text"
               value={config.llm.curatorModel ?? ""}
-              onChange={(e) =>
-                setConfig({ ...config, llm: { ...config.llm, curatorModel: e.target.value } })
-              }
+              onChange={(e) => {
+                setConfig({ ...config, llm: { ...config.llm, curatorModel: e.target.value } });
+                setLlmDirty(true);
+                setShowLLMSavedHint(false);
+              }}
               placeholder="留空则与主模型相同"
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
@@ -163,8 +266,19 @@ export function SettingsPage() {
       </div>
 
       {/* Sync Config */}
-      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4 relative">
+        {syncParamsDirty && (
+          <div className="absolute top-3 right-3 flex items-center gap-2 text-amber-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <span className="text-xs">有改动未保存</span>
+          </div>
+        )}
         <h3 className="text-sm font-medium">同步设置</h3>
+        {showSyncParamsSavedHint && (
+          <p className="text-xs text-green-600/80">
+            同步参数已更新，下次同步会使用新参数。
+          </p>
+        )}
 
         <div className="flex items-center justify-between">
           <div>
@@ -174,10 +288,12 @@ export function SettingsPage() {
           <select
             value={config.sync.mode}
             onChange={(e) =>
-              setConfig({
+              (setConfig({
                 ...config,
                 sync: { ...config.sync, mode: e.target.value as "manual" | "auto" },
-              })
+              }),
+              setSyncParamsDirty(true),
+              setShowSyncParamsSavedHint(false))
             }
             className="px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none"
           >
@@ -195,10 +311,12 @@ export function SettingsPage() {
               type="number"
               value={config.sync.intervalMinutes}
               onChange={(e) =>
-                setConfig({
+                (setConfig({
                   ...config,
                   sync: { ...config.sync, intervalMinutes: parseInt(e.target.value) || 30 },
-                })
+                }),
+                setSyncParamsDirty(true),
+                setShowSyncParamsSavedHint(false))
               }
               className="w-32 px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
@@ -214,10 +332,12 @@ export function SettingsPage() {
               type="number"
               value={config.sync.maxTurns ?? 80}
               onChange={(e) =>
-                setConfig({
+                (setConfig({
                   ...config,
                   sync: { ...config.sync, maxTurns: parseInt(e.target.value) || 80 },
-                })
+                }),
+                setSyncParamsDirty(true),
+                setShowSyncParamsSavedHint(false))
               }
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
@@ -232,10 +352,12 @@ export function SettingsPage() {
               type="number"
               value={config.sync.maxCharsPerTurn ?? 800}
               onChange={(e) =>
-                setConfig({
+                (setConfig({
                   ...config,
                   sync: { ...config.sync, maxCharsPerTurn: parseInt(e.target.value) || 800 },
-                })
+                }),
+                setSyncParamsDirty(true),
+                setShowSyncParamsSavedHint(false))
               }
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
@@ -250,10 +372,12 @@ export function SettingsPage() {
               type="number"
               value={config.sync.compactionThreshold ?? 10}
               onChange={(e) =>
-                setConfig({
+                (setConfig({
                   ...config,
                   sync: { ...config.sync, compactionThreshold: parseInt(e.target.value) || 10 },
-                })
+                }),
+                setSyncParamsDirty(true),
+                setShowSyncParamsSavedHint(false))
               }
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
@@ -263,11 +387,22 @@ export function SettingsPage() {
       </div>
 
       {/* Project Sync Selection */}
-      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4 relative">
+        {syncSelectionDirty && (
+          <div className="absolute top-3 right-3 flex items-center gap-2 text-amber-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <span className="text-xs">有改动未保存</span>
+          </div>
+        )}
         <h3 className="text-sm font-medium">同步项目选择</h3>
         <p className="text-xs text-muted-foreground">
           勾选"全部同步"会同步所有检测到的项目；取消后可单独选择
         </p>
+        {showSyncSavedHint && (
+          <p className="text-xs text-green-600/80">
+            同步默认范围已更新，下次在概览页同步时会作为默认选项。
+          </p>
+        )}
 
         <div className="space-y-1.5">
           <label className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary">
@@ -276,10 +411,19 @@ export function SettingsPage() {
               checked={isSyncAll}
               onChange={(e) => {
                 if (e.target.checked) {
+                  setLastManualSelection(config.syncProjects ?? []);
+                  setShowSyncSavedHint(false);
+                  setSyncSelectionDirty(true);
                   setConfig({ ...config, syncAll: true, syncProjects: [] });
                 } else {
-                  // Switch to manual selection, start with all selected
-                  setConfig({ ...config, syncAll: false, syncProjects: [...allProjectAliases] });
+                  setShowSyncSavedHint(false);
+                  setSyncSelectionDirty(true);
+                  // Switch to manual selection, restore previous manual selection if present.
+                  setConfig({
+                    ...config,
+                    syncAll: false,
+                    syncProjects: lastManualSelection ?? [...allProjectAliases],
+                  });
                 }
               }}
               className="accent-primary"
@@ -319,7 +463,13 @@ export function SettingsPage() {
       </div>
 
       {/* Privacy Protection */}
-      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4 relative">
+        {privacyDirty && (
+          <div className="absolute top-3 right-3 flex items-center gap-2 text-amber-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <span className="text-xs">有改动未保存</span>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-medium">隐私保护</h3>
@@ -332,16 +482,24 @@ export function SettingsPage() {
               type="checkbox"
               checked={config.privacy?.enabled ?? false}
               onChange={(e) =>
-                setConfig({
+                (setConfig({
                   ...config,
                   privacy: { ...config.privacy, enabled: e.target.checked },
-                })
+                }),
+                setPrivacyDirty(true),
+                setShowPrivacySavedHint(false))
               }
               className="accent-primary"
             />
             <span className="text-xs">启用</span>
           </label>
         </div>
+
+        {showPrivacySavedHint && (
+          <p className="text-xs text-green-600/80">
+            隐私保护已更新，下次同步/保存会应用生效。
+          </p>
+        )}
 
         {config.privacy?.enabled && (
           <>
@@ -353,10 +511,12 @@ export function SettingsPage() {
                 type="text"
                 value={config.privacy?.replacement ?? "[***]"}
                 onChange={(e) =>
-                  setConfig({
+                  (setConfig({
                     ...config,
                     privacy: { ...config.privacy, replacement: e.target.value },
-                  })
+                  }),
+                  setPrivacyDirty(true),
+                  setShowPrivacySavedHint(false))
                 }
                 className="w-40 px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
               />
@@ -369,13 +529,15 @@ export function SettingsPage() {
               <textarea
                 value={(config.privacy?.sensitiveWords ?? []).join("\n")}
                 onChange={(e) =>
-                  setConfig({
+                  (setConfig({
                     ...config,
                     privacy: {
                       ...config.privacy,
                       sensitiveWords: e.target.value.split("\n").filter((s) => s.trim()),
                     },
-                  })
+                  }),
+                  setPrivacyDirty(true),
+                  setShowPrivacySavedHint(false))
                 }
                 rows={5}
                 placeholder={"张三\n13812345678\nzhangsan@email.com\n某某大学"}
@@ -395,6 +557,11 @@ export function SettingsPage() {
         <p className="text-xs text-muted-foreground">
           安装 /allmem、/allmem-sync 和 /allmem-undo skill 到你的AI工具中
         </p>
+        {skillToast && (
+          <p className="text-xs text-green-600/80">
+            {skillToast.message}
+          </p>
+        )}
 
         <div className="space-y-2">
           {detectedAgents
