@@ -157,6 +157,11 @@ export async function runSync(
 
   const totalProjects = filteredGroups.size;
   let processedProjects = 0;
+  let lastProjectProgress = 0;
+  const guardProjectProgress = (p: number) => {
+    lastProjectProgress = Math.max(lastProjectProgress, p);
+    return lastProjectProgress;
+  };
 
   // ── Step 3: Process each project (with concurrency limit) ──
   const userConversations: string[] = [];
@@ -166,7 +171,15 @@ export async function runSync(
     distilled: { newExperiences: Omit<Experience, "id" | "created" | "updated" | "confidence" | "sources">[]; reinforced: string[] };
   }> = [];
 
+  let projectOrder = 0;
   for (const [projectPath, sessions] of filteredGroups) {
+    projectOrder++;
+    const currentProjectIndex = projectOrder; // 1..totalProjects (stable snapshot for progress calc)
+    const sliceStart = 30 + ((currentProjectIndex - 1) / totalProjects) * 50;
+    const sliceEnd = 30 + (currentProjectIndex / totalProjects) * 50;
+    const getProjectProgress = (fraction: number) =>
+      sliceStart + (sliceEnd - sliceStart) * fraction; // fraction in [0, 1]
+
     const projectName = sessions[0].projectName;
 
     const processProject = async () => {
@@ -193,8 +206,8 @@ export async function runSync(
         // ── Agent 1: Narrator (good model, sequential) ──
         onProgress?.({
           stage: "叙事",
-          detail: `提取 ${projectName} 的因果链... (${processedProjects + 1}/${totalProjects})`,
-          progress: 30 + (processedProjects / totalProjects) * 50,
+          detail: `提取 ${projectName} 的因果链... (${currentProjectIndex}/${totalProjects})`,
+          progress: guardProjectProgress(getProjectProgress(0.1)),
         });
 
         const goodConfig = getLLMConfigForRole(config.llm, "narrator");
@@ -206,8 +219,8 @@ export async function runSync(
         // ── Agent 2 + 3: Curator + Distiller (parallel) ──
         onProgress?.({
           stage: isUpdate ? "更新" : "整理",
-          detail: `${isUpdate ? "更新" : "整理"} ${projectName} 的记忆... (${processedProjects + 1}/${totalProjects})`,
-          progress: 30 + (processedProjects / totalProjects) * 50 + 3,
+          detail: `${isUpdate ? "更新" : "整理"} ${projectName} 的记忆... (${currentProjectIndex}/${totalProjects})`,
+          progress: guardProjectProgress(getProjectProgress(0.35)),
         });
 
         const cheapConfig = getLLMConfigForRole(config.llm, "curator");
@@ -227,7 +240,7 @@ export async function runSync(
             onProgress?.({
               stage: "压缩",
               detail: `压缩 ${projectName} 的记忆 (${recentCount} 条近期记录)...`,
-              progress: 30 + (processedProjects / totalProjects) * 50 + 5,
+              progress: guardProjectProgress(getProjectProgress(0.7)),
             });
 
             const recentContent = await loadProjectRecent(alias);
@@ -300,7 +313,7 @@ export async function runSync(
         onProgress?.({
           stage: "完成项目",
           detail: `${projectName} 同步完成 (${processedProjects}/${totalProjects})`,
-          progress: 30 + (processedProjects / totalProjects) * 50,
+          progress: guardProjectProgress(getProjectProgress(1)),
           completedProject: alias,
         });
       } catch (err) {

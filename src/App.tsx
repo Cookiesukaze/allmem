@@ -18,7 +18,7 @@ function App() {
   }, []);
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="flex flex-col h-full min-h-screen bg-background">
       <TitleBar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />

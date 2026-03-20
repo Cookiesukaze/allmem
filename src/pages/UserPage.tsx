@@ -38,7 +38,7 @@ export function UserPage() {
       </div>
 
       {/* Global Instructions */}
-      <div className="bg-card rounded-xl border border-border p-4">
+      <div className="bg-card rounded-xl border border-border p-4 shadow-sm transition-shadow hover:shadow-md">
         <div className="flex items-center justify-between mb-2">
           <div>
             <h3 className="text-sm font-medium">全局使用说明</h3>
@@ -95,7 +95,7 @@ export function UserPage() {
       </div>
 
       {/* Auto-generated Profile */}
-      <div className="bg-card rounded-xl border border-border p-4">
+      <div className="bg-card rounded-xl border border-border p-4 shadow-sm transition-shadow hover:shadow-md">
         <div className="flex items-center justify-between mb-2">
           <div>
             <h3 className="text-sm font-medium">用户画像</h3>

@@ -73,7 +73,7 @@ export function ExperiencesPage() {
           return (
             <div
               key={exp.id}
-              className="bg-card rounded-xl border border-border p-4 hover:border-purple-500/30 transition-colors"
+              className="bg-card rounded-xl border border-border p-4 shadow-sm hover:shadow-md hover:border-purple-500/30 transition-colors transition-shadow"
             >
               <div
                 className="flex items-start justify-between cursor-pointer"
@@ -91,10 +91,10 @@ export function ExperiencesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 ml-3 flex-shrink-0">
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 border border-purple-500/20">
                     confidence: {exp.confidence}
                   </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary/70 text-muted-foreground border border-border">
                     {exp.scope === "global" ? "全局" : "项目"}
                   </span>
                   {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -116,7 +116,7 @@ export function ExperiencesPage() {
                     {exp.tags.map((tag) => (
                       <span
                         key={tag}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600"
+                        className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 border border-purple-500/20"
                       >
                         {tag}
                       </span>
