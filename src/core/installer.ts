@@ -353,6 +353,7 @@ export async function installSkillToCodex(): Promise<boolean> {
     }
 
     const instructionsPath = await join(codexDir, "instructions.md");
+    // NOTE: Keep this content stable and identifiable so we can upsert it safely.
     const skillContent = `
 # AllMem 记忆管理
 
@@ -376,13 +377,13 @@ export async function installSkillToCodex(): Promise<boolean> {
 当用户说"撤销记忆"、"undo allmem"时，删除 AGENTS.md 中的 <!-- allmem-start/end --> 区块。
 `;
 
-    // Append to existing instructions if present, or create new
+    // Upsert into existing instructions if present, or create new.
+    // Older versions used '# AllMem 记忆加载' as the header; new version uses '# AllMem 记忆管理'.
     try {
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
       const existing = await readTextFile(instructionsPath);
-      if (!existing.includes("AllMem 记忆加载")) {
-        await writeTextFile(instructionsPath, existing + "\n" + skillContent);
-      }
+      const upserted = upsertCodexAllMemBlock(existing, skillContent);
+      await writeTextFile(instructionsPath, upserted);
     } catch {
       await writeTextFile(instructionsPath, skillContent);
     }
@@ -403,7 +404,11 @@ export async function isSkillInstalled(tool: "claude" | "codex"): Promise<boolea
     try {
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
       const content = await readTextFile(await join(home, ".codex", "instructions.md"));
-      return content.includes("AllMem 记忆管理");
+      // Accept both legacy and new headers.
+      return (
+        content.includes("# AllMem 记忆管理") ||
+        content.includes("# AllMem 记忆加载")
+      );
     } catch {
       return false;
     }
@@ -440,8 +445,11 @@ export async function uninstallSkillFromCodex(): Promise<boolean> {
   try {
     const { readTextFile } = await import("@tauri-apps/plugin-fs");
     const content = await readTextFile(instructionsPath);
-    // Remove the AllMem section
-    const cleaned = content.replace(/\n?# AllMem 记忆管理[\s\S]*?(?=\n# (?!AllMem)|$)/, "").trim();
+    // Remove the AllMem section (both legacy and new headers). Use global replace to handle duplicates.
+    const cleaned = content
+      .replace(/\n?# AllMem 记忆管理[\s\S]*?(?=\n# |\r?\n# |$)/g, "")
+      .replace(/\n?# AllMem 记忆加载[\s\S]*?(?=\n# |\r?\n# |$)/g, "")
+      .trim();
     if (cleaned) {
       await writeTextFile(instructionsPath, cleaned);
     } else {
@@ -452,4 +460,25 @@ export async function uninstallSkillFromCodex(): Promise<boolean> {
     console.error("Failed to uninstall skill from Codex:", err);
     return false;
   }
+}
+
+function upsertCodexAllMemBlock(existing: string, block: string): string {
+  const normalized = existing ?? "";
+  const hasNew = normalized.includes("# AllMem 记忆管理");
+  const hasLegacy = normalized.includes("# AllMem 记忆加载");
+
+  // If neither exists, append.
+  if (!hasNew && !hasLegacy) {
+    const sep = normalized.trim().length ? "\n\n" : "";
+    return normalized.replace(/\s*$/, "") + sep + block.trimStart();
+  }
+
+  // If either exists, remove all occurrences (dedupe), then append the latest block.
+  const removed = normalized
+    .replace(/\n?# AllMem 记忆管理[\s\S]*?(?=\n# |\r?\n# |$)/g, "")
+    .replace(/\n?# AllMem 记忆加载[\s\S]*?(?=\n# |\r?\n# |$)/g, "")
+    .trim();
+
+  const sep = removed.length ? "\n\n" : "";
+  return removed + sep + block.trimStart();
 }

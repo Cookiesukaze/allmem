@@ -142,7 +142,7 @@ ${contextParts.length > 0 ? "=== 记忆上下文 ===\n" + contextParts.join("\n\
       </div>
 
       {/* Project Selection */}
-      <div className="bg-card rounded-xl border border-border p-3 flex-shrink-0">
+      <div className="bg-card rounded-xl border border-border p-3 flex-shrink-0 shadow-sm transition-shadow hover:shadow-md">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground">加载记忆:</span>
           {projects.map((p) => (
@@ -165,7 +165,7 @@ ${contextParts.length > 0 ? "=== 记忆上下文 ===\n" + contextParts.join("\n\
       </div>
 
       {/* Chat Area */}
-      <div className="bg-card rounded-xl border border-border flex-1 flex flex-col overflow-hidden">
+      <div className="bg-card rounded-xl border border-border flex-1 flex flex-col overflow-hidden shadow-sm transition-shadow hover:shadow-md">
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {chatMessages.length === 0 && (

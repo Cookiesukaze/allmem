@@ -215,7 +215,7 @@ export function ProjectsPage() {
           {projects.map((project) => (
             <div
               key={project.alias}
-              className="bg-card rounded-xl border border-border p-4 hover:border-primary/30 transition-colors"
+              className="bg-card rounded-xl border border-border p-4 shadow-sm hover:shadow-md hover:border-primary/30 transition-colors transition-shadow"
             >
               <div className="flex items-center justify-between">
                 <div
@@ -344,14 +344,14 @@ export function ProjectsPage() {
 
       {/* Sync Status */}
       {syncStatus && (
-        <div className="bg-card rounded-xl border border-border p-3">
+        <div className="bg-card rounded-xl border border-border p-3 shadow-sm transition-shadow hover:shadow-md">
           <p className="text-xs text-muted-foreground">{syncStatus}</p>
         </div>
       )}
 
       {/* Meta Info Card */}
       {meta && (
-        <div className="bg-card rounded-xl border border-border p-4">
+        <div className="bg-card rounded-xl border border-border p-4 shadow-sm transition-shadow hover:shadow-md">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium">项目元信息</h3>
             {editingMeta ? (
@@ -467,7 +467,7 @@ export function ProjectsPage() {
       )}
 
       {/* Project Instructions (user-editable) */}
-      <div className="bg-card rounded-xl border border-border p-4">
+      <div className="bg-card rounded-xl border border-border p-4 shadow-sm transition-shadow hover:shadow-md">
         <div className="flex items-center justify-between mb-2">
           <div>
             <h3 className="text-sm font-medium">项目使用说明</h3>
@@ -537,7 +537,7 @@ export function ProjectsPage() {
 
       {/* History Panel */}
       {showHistory && (
-        <div className="bg-card rounded-xl border border-border p-4">
+        <div className="bg-card rounded-xl border border-border p-4 shadow-sm transition-shadow hover:shadow-md">
           <h3 className="text-sm font-medium mb-3">版本历史</h3>
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
             {versions.map((v) => (
@@ -647,7 +647,7 @@ export function ProjectsPage() {
                     {exp.tags.map((tag) => (
                       <span
                         key={tag}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600"
+                        className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 border border-purple-500/20"
                       >
                         {tag}
                       </span>
