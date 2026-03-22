@@ -1,4 +1,4 @@
-import { LayoutDashboard, FolderOpen, User, Settings, MessageSquare, Lightbulb, Github } from "lucide-react";
+﻿import { LayoutDashboard, FolderOpen, User, Settings, MessageSquare, Lightbulb, Github } from "lucide-react";
 import { open } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "../store";
 import { clsx } from "clsx";
@@ -6,7 +6,7 @@ import { clsx } from "clsx";
 const NAV_ITEMS = [
   { id: "dashboard" as const, label: "概览", icon: LayoutDashboard },
   { id: "projects" as const, label: "项目", icon: FolderOpen },
-  { id: "experiences" as const, label: "经验", icon: Lightbulb },
+  { id: "experiences" as const, label: "经验 / 技能", icon: Lightbulb },
   { id: "chat" as const, label: "对话", icon: MessageSquare },
   { id: "user" as const, label: "用户", icon: User },
   { id: "settings" as const, label: "设置", icon: Settings },
@@ -16,7 +16,7 @@ export function Sidebar() {
   const { activePage, setActivePage } = useAppStore();
 
   return (
-    <aside className="w-48 flex-shrink-0 bg-card/50 border-r border-border flex flex-col">
+    <aside className="w-52 flex-shrink-0 bg-card/50 border-r border-border flex flex-col">
       <nav className="flex-1 p-2 space-y-0.5">
         {NAV_ITEMS.map((item) => (
           <button

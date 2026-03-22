@@ -1,18 +1,20 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Download, CheckCircle2, RefreshCw, Trash2 } from "lucide-react";
 import { useAppStore } from "../store";
-import { loadConfig, saveConfig, listProjects } from "../core/storage";
+import { loadConfig, saveConfig, listProjects, clearAllMemory } from "../core/storage";
 import { installSkillToClaude, installSkillToCodex, isSkillInstalled, uninstallSkillFromClaude, uninstallSkillFromCodex } from "../core/installer";
 import { detectAgents } from "../core/detector";
 import { extractClaudeSessions, extractCodexSessions, groupByProject } from "../core/extractor";
 
 export function SettingsPage() {
-  const { config, setConfig, detectedAgents, setDetectedAgents } = useAppStore();
+  const { config, setConfig, detectedAgents, setDetectedAgents, setProjects, setSelectedProject, clearChat } = useAppStore();
   const [skillStatus, setSkillStatus] = useState<Record<string, boolean>>({});
   const [installingSkill, setInstallingSkill] = useState<string | null>(null);
   const [uninstallingSkill, setUninstallingSkill] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [allProjectAliases, setAllProjectAliases] = useState<string[]>([]);
+  const [clearingAll, setClearingAll] = useState(false);
+  const [clearAllStatus, setClearAllStatus] = useState("");
 
   useEffect(() => {
     loadConfig().then(setConfig).catch(console.error);
@@ -96,6 +98,27 @@ export function SettingsPage() {
       ? current.filter((a) => a !== alias)
       : [...current, alias];
     setConfig({ ...config, syncAll: false, syncProjects: updated });
+  };
+
+  const handleClearAllMemory = async () => {
+    if (!confirm("确定清空 AllMem 的全部记忆数据？会删除 user/projects/experiences/raw/logs 下的内容，但保留当前设置。")) {
+      return;
+    }
+
+    setClearingAll(true);
+    setClearAllStatus("清理中...");
+    try {
+      await clearAllMemory();
+      setProjects([]);
+      setSelectedProject(null);
+      clearChat();
+      setClearAllStatus("已清空全部记忆");
+      await scanDetectedProjects();
+    } catch (err) {
+      setClearAllStatus(`清空失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setClearingAll(false);
+    }
   };
 
   const isSyncAll = config.syncAll ?? true;
@@ -479,6 +502,24 @@ export function SettingsPage() {
         </div>
       </div>
 
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+        <div>
+          <h3 className="text-sm font-medium">数据清理</h3>
+          <p className="text-xs text-muted-foreground mt-1">全局清空 AllMem 已保存的记忆数据，但保留当前设置。</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleClearAllMemory}
+            disabled={clearingAll}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-red-500/30 text-red-500 hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+          >
+            <Trash2 size={14} />
+            {clearingAll ? "清理中..." : "清空全部记忆"}
+          </button>
+          {clearAllStatus && <p className="text-xs text-muted-foreground">{clearAllStatus}</p>}
+        </div>
+      </div>
+
       {/* Save */}
       <button
         onClick={handleSave}
@@ -496,3 +537,5 @@ export function SettingsPage() {
     </div>
   );
 }
+
+

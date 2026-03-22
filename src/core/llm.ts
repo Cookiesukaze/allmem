@@ -1,6 +1,6 @@
-// LLM client: OpenAI-compatible API
+﻿// LLM client: OpenAI-compatible API
 
-import type { AllMemConfig, Experience } from "./types";
+import type { AllMemConfig, Experience, ProjectObjects } from "./types";
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -42,9 +42,6 @@ export async function callLLM(
   return data.choices[0]?.message?.content ?? "";
 }
 
-/**
- * Extract structured information from raw conversation text
- */
 export async function extractStructured(
   rawConversation: string,
   projectName: string,
@@ -106,9 +103,6 @@ export async function extractStructured(
   );
 }
 
-/**
- * Extract user-level information from conversation
- */
 export async function extractUserInfo(
   rawConversation: string,
   existingProfile: string | null,
@@ -150,9 +144,6 @@ export async function extractUserInfo(
   );
 }
 
-/**
- * Generate a one-line summary for a memory version
- */
 export async function generateVersionSummary(
   oldMemory: string | null,
   newMemory: string,
@@ -162,16 +153,9 @@ export async function generateVersionSummary(
     ? `旧版记忆:\n${oldMemory}\n\n新版记忆:\n${newMemory}\n\n用一句简短中文描述这次更新的主要变化（10字以内）。只输出这一句话，不要其他内容。`
     : `记忆内容:\n${newMemory}\n\n用一句简短中文描述这份记忆的主题（10字以内）。只输出这一句话，不要其他内容。`;
 
-  return callLLM(
-    [{ role: "user", content: prompt }],
-    config
-  );
+  return callLLM([{ role: "user", content: prompt }], config);
 }
 
-/**
- * Lightweight: summarize a single conversation into 3-5 bullet points
- * Used for WAL-style incremental append to recent.md
- */
 export async function summarizeSingleConversation(
   conversationText: string,
   projectName: string,
@@ -196,10 +180,6 @@ export async function summarizeSingleConversation(
   );
 }
 
-/**
- * Compaction: merge latest.md (long-term) + recent.md (accumulated WAL) into new latest.md
- * Only called when recent.md accumulates enough entries
- */
 export async function compactMemory(
   latestMemory: string | null,
   recentEntries: string,
@@ -257,9 +237,6 @@ export async function compactMemory(
   );
 }
 
-/**
- * Generate a short project description from conversation context
- */
 export async function generateProjectDescription(
   rawConversation: string,
   projectName: string,
@@ -278,17 +255,9 @@ ${rawConversation.slice(0, 3000)}
 
 只输出描述，不要标题和格式符号。`;
 
-  return callLLM(
-    [{ role: "user", content: descPrompt }],
-    config
-  );
+  return callLLM([{ role: "user", content: descPrompt }], config);
 }
 
-/**
- * Narrator: extract causal chains from conversation.
- * Output: structured problem → attempts (including failures) → outcome narratives.
- * Uses the good model.
- */
 export async function narrateCausalChains(
   conversationText: string,
   projectName: string,
@@ -325,11 +294,88 @@ export async function narrateCausalChains(
   );
 }
 
-/**
- * Distiller: extract reusable experiences from causal chains.
- * Compares with existing experiences to deduplicate and reinforce.
- * Uses the good model.
- */
+export async function extractProjectObjects(
+  projectName: string,
+  memoryMarkdown: string | null,
+  recentMarkdown: string | null,
+  causalNarrative: string,
+  config: AllMemConfig["llm"]
+): Promise<ProjectObjects> {
+  const systemPrompt = `你是一个项目记忆结构化助手。你的目标不是生成漂亮摘要，而是把项目记忆整理成真正可用的项目状态系统。
+
+输出严格 JSON，不要 markdown 代码块，格式如下：
+{
+  "state": {
+    "goal": "项目当前的核心目标",
+    "currentStatus": "目前做到哪一步、整体状态如何",
+    "currentFocus": "当前最重要的工作焦点",
+    "nextSteps": ["下一步1", "下一步2"],
+    "risks": ["风险1", "阻塞1"]
+  },
+  "rules": [
+    { "content": "不要自动 push 到远程，除非用户明确确认", "rationale": "用户习惯/安全边界" }
+  ],
+  "resources": [
+    { "label": "开发目录", "kind": "path", "value": "E:/Project3s/aipro/allmem", "note": "主工作目录" },
+    { "label": "启动命令", "kind": "command", "value": "npm run dev", "note": "前端开发" },
+    { "label": "关键说明文档", "kind": "doc", "value": "README.md", "note": "项目入口文档" }
+  ],
+  "events": [
+    {
+      "title": "把项目记忆模型改为 state/rules/resources/events",
+      "trigger": "用户认为旧结构过碎、过虚",
+      "actions": ["分析用户手工状态文档中的高价值信息", "删除中间层对象", "重写提取和展示逻辑"],
+      "result": "项目对象更少，边界更清楚，更适合状态管理",
+      "lesson": "项目记忆优先服务当前推进和可复用资料，而不是抽象分类",
+      "refs": ["memo_sample/css_dev/state.txt", "allmem/src/core/types.ts"]
+    }
+  ]
+}
+
+对象定义：
+1. state: 当前局面。它不是项目简介，而是“现在项目在干什么、接下来做什么、卡在哪”。goal / currentStatus / currentFocus 都要简短明确。
+2. rules: 长期有效的规则、偏好、协作习惯、约束、红线。它们应该是以后还要继续记住的东西。
+3. resources: 真正有用的路径、命令、URL、文档、环境信息。必须是未来会查、会用、会复用的资料。
+4. events: 重要闭环事件。必须体现 触发 -> 处理 -> 结果，优先保留关键版本推进、重大问题修复、路线调整、重要错误与修正。
+
+严格要求：
+1. 不要提取低价值噪音，例如普通重启、一次性小报错、纯装饰改动、机械操作。
+2. 要尽量捕捉用户习惯、重要路径、关键资料、重要错误、因果链和闭环结果。
+3. 不要为了凑类别硬塞内容；没有就返回空字符串或空数组。
+4. state 最多 5 个 nextSteps、5 个 risks；rules 最多 8 条；resources 最多 12 条；events 最多 8 条。
+5. 输出必须可被 JSON.parse 直接解析。`;
+
+  const userPrompt = `项目: ${projectName}
+
+长期记忆:
+${memoryMarkdown ?? "（暂无）"}
+
+近期动态:
+${recentMarkdown ?? "（暂无）"}
+
+因果链:
+${causalNarrative}
+
+请输出结构化对象 JSON。`;
+
+  const raw = await callLLM(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    config
+  );
+
+  try {
+    const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned) as Partial<ProjectObjects> & Record<string, unknown>;
+    return normalizeExtractedProjectObjects(parsed);
+  } catch {
+    console.warn("[objects] Failed to parse LLM response as JSON:", raw);
+    return createEmptyProjectObjects();
+  }
+}
+
 export async function distillExperiences(
   causalNarrative: string,
   projectAlias: string,
@@ -337,10 +383,10 @@ export async function distillExperiences(
   config: AllMemConfig["llm"]
 ): Promise<{ newExperiences: Omit<Experience, "id" | "created" | "updated" | "confidence" | "sources">[]; reinforced: string[] }> {
   const existingSummary = existingExperiences.length > 0
-    ? existingExperiences.map(e => `[${e.id}] ${e.title}: ${e.content} (标签: ${e.tags.join(",")})`).join("\n")
+    ? existingExperiences.map((e) => `[${e.id}] ${e.title}: ${e.content} (标签: ${e.tags.join(",")})`).join("\n")
     : "（暂无已有经验）";
 
-  const systemPrompt = `你是一个经验蒸馏专家。从因果链叙事中判断是否存在值得记录的可复用经验。
+  const systemPrompt = `你是一个经验蒸馏专家。从因果链叙事中判断是否存在值得长期保留的高价值经验。
 
 已有经验列表:
 ${existingSummary}
@@ -360,14 +406,15 @@ ${existingSummary}
 }
 
 一条信息值得成为经验，当且仅当：
-1. 可迁移：换一个项目遇到类似场景仍然适用
-2. 非显然：不是任何开发者都天然知道的常识
-3. 有因果：不只是"做了X"，而是"因为Y所以应该做X"
+1. 高价值：它对应大版本推进、关键问题攻克或关键路线取舍，而不是零碎操作
+2. 可迁移：换一个项目遇到类似场景仍然适用
+3. 非显然：不是任何开发者都天然知道的常识
+4. 有因果：不只是"做了X"，而是"因为Y所以应该做X"
 
 不应该成为经验的：
 - 项目特有的业务逻辑 → 这属于项目记忆
-- 一次性的debug过程（端口冲突等） → 没有迁移价值
-- 常识性的东西 → AI本来就知道
+- 一次性的debug过程（端口冲突、重启服务、临时改路径等） → 没有迁移价值
+- 常识性的东西或一条命令就能完成的简单动作 → AI本来就知道
 - 纯事实记录 → 这是记忆不是经验
 
 规则:
@@ -376,7 +423,8 @@ ${existingSummary}
 3. scope=global: 跨项目通用; scope=project: 仅限当前项目类型
 4. 标签用英文小写，2-4个
 5. 大多数对话不会产生新经验，这是正常的。如果没有值得记录的，返回 {"new": [], "reinforced": []}
-6. 每次最多提取3条新经验`;
+6. 如果只是完成了简单操作、普通命令执行、常规重启，不要提取
+7. 每次最多提取3条新经验`;
 
   const userPrompt = `项目: ${projectAlias}\n\n因果链:\n${causalNarrative}\n\n请提取可复用经验。`;
 
@@ -401,25 +449,20 @@ ${existingSummary}
   }
 }
 
-/**
- * Merge distilled experiences into the existing experience store.
- * Pure function, no LLM calls.
- */
 export function mergeExperiences(
   existing: Experience[],
   distilled: { newExperiences: Omit<Experience, "id" | "created" | "updated" | "confidence" | "sources">[]; reinforced: string[] },
   projectAlias: string
 ): Experience[] {
   const now = new Date().toISOString();
-  const updated = existing.map(e => ({ ...e })); // shallow clone
+  const updated = existing.map((e) => ({ ...e }));
 
-  // Reinforce existing experiences
   for (const id of distilled.reinforced) {
-    const exp = updated.find(e => e.id === id);
+    const exp = updated.find((e) => e.id === id);
     if (exp) {
       exp.confidence += 1;
       exp.updated = now;
-      const src = exp.sources.find(s => s.project === projectAlias);
+      const src = exp.sources.find((s) => s.project === projectAlias);
       if (src) {
         src.count++;
         src.lastSeen = now;
@@ -429,7 +472,6 @@ export function mergeExperiences(
     }
   }
 
-  // Add new experiences
   for (const ne of distilled.newExperiences) {
     const id = `exp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     updated.push({
@@ -437,14 +479,113 @@ export function mergeExperiences(
       title: ne.title,
       content: ne.content,
       context: ne.context,
+      kind: ne.kind,
       tags: ne.tags ?? [],
       scope: (ne.scope as "global" | "project") ?? "global",
       sources: [{ project: projectAlias, count: 1, lastSeen: now }],
       confidence: 1,
+      trigger: ne.trigger,
+      steps: ne.steps,
+      verification: ne.verification,
+      whyItWorks: ne.whyItWorks,
       created: now,
       updated: now,
     });
   }
 
   return updated;
+}
+
+function createEmptyProjectObjects(): ProjectObjects {
+  return {
+    state: {
+      goal: "",
+      currentStatus: "",
+      currentFocus: "",
+      nextSteps: [],
+      risks: [],
+    },
+    rules: [],
+    resources: [],
+    events: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeExtractedProjectObjects(parsed: Partial<ProjectObjects> & Record<string, unknown>): ProjectObjects {
+  const state = parsed.state as Partial<ProjectObjects["state"]> | undefined;
+  const rules = Array.isArray(parsed.rules) ? parsed.rules : [];
+  const resources = Array.isArray(parsed.resources) ? parsed.resources : [];
+  const events = Array.isArray(parsed.events) ? parsed.events : [];
+
+  return {
+    state: {
+      goal: typeof state?.goal === "string" ? state.goal.trim() : "",
+      currentStatus: typeof state?.currentStatus === "string" ? state.currentStatus.trim() : "",
+      currentFocus: typeof state?.currentFocus === "string" ? state.currentFocus.trim() : "",
+      nextSteps: Array.isArray(state?.nextSteps)
+        ? state.nextSteps.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
+        : [],
+      risks: Array.isArray(state?.risks)
+        ? state.risks.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
+        : [],
+    },
+    rules: rules
+      .slice(0, 8)
+      .map((rule, index) => {
+        const candidate = rule as { content?: string; rationale?: string };
+        return {
+          id: `rule-${index + 1}`,
+          content: (candidate.content ?? "").trim(),
+          rationale: (candidate.rationale ?? "").trim() || undefined,
+        };
+      })
+      .filter((rule) => rule.content.length > 0),
+    resources: resources
+      .slice(0, 12)
+      .map((resource, index) => {
+        const candidate = resource as { label?: string; kind?: string; value?: string; note?: string };
+        return {
+          id: `resource-${index + 1}`,
+          label: (candidate.label ?? "").trim(),
+          kind: normalizeResourceKind(candidate.kind),
+          value: (candidate.value ?? "").trim(),
+          note: (candidate.note ?? "").trim() || undefined,
+        };
+      })
+      .filter((resource) => resource.label.length > 0 && resource.value.length > 0),
+    events: events
+      .slice(0, 8)
+      .map((event, index) => {
+        const candidate = event as {
+          title?: string;
+          trigger?: string;
+          actions?: string[];
+          result?: string;
+          lesson?: string;
+          refs?: string[];
+        };
+        return {
+          id: `event-${index + 1}`,
+          title: (candidate.title ?? "").trim(),
+          trigger: (candidate.trigger ?? "").trim(),
+          actions: Array.isArray(candidate.actions)
+            ? candidate.actions.map((item) => String(item).trim()).filter(Boolean).slice(0, 6)
+            : [],
+          result: (candidate.result ?? "").trim(),
+          lesson: (candidate.lesson ?? "").trim() || undefined,
+          refs: Array.isArray(candidate.refs)
+            ? candidate.refs.map((item) => String(item).trim()).filter(Boolean).slice(0, 6)
+            : [],
+        };
+      })
+      .filter((event) => event.title.length > 0 || event.result.length > 0),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeResourceKind(kind: unknown): ProjectObjects["resources"][number]["kind"] {
+  return kind === "path" || kind === "command" || kind === "url" || kind === "doc" || kind === "env"
+    ? kind
+    : "doc";
 }
