@@ -385,7 +385,7 @@ export function ProjectsPage() {
 
         <div className="space-y-2">
           {projects.map((project) => (
-            <div key={project.alias} className="rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/30 shadow-sm hover:shadow-md">
+            <div key={project.alias} className="rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/30">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setSelectedProject(project.alias)}>
                   <h3 className="text-sm font-medium">{project.alias}</h3>
