@@ -146,6 +146,11 @@ export async function loadProjectRecent(alias: string): Promise<string | null> {
   }
 }
 
+export async function saveProjectRecent(alias: string, content: string): Promise<void> {
+  const dir = await getAllMemDir();
+  await writeTextFile(await join(dir, "projects", alias, "recent.md"), content);
+}
+
 export async function appendProjectRecent(alias: string, entry: string, source: string, occurredAt?: number): Promise<void> {
   const dir = await getAllMemDir();
   const projectDir = await join(dir, "projects", alias);

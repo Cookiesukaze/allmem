@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ChevronLeft,
@@ -36,6 +36,7 @@ import {
   saveProjectMemory,
   saveProjectMeta,
   saveProjectObjects,
+  saveProjectRecent,
   setVersionAsCurrent,
 } from "../core/storage";
 import { loadConfig } from "../core/storage";
@@ -52,7 +53,6 @@ import { useAppStore } from "../store";
 
 type ProjectTab = "workspace" | "memory" | "distill" | "manual";
 type ResourceKind = ProjectResource["kind"];
-
 
 export function ProjectsPage() {
   const {
@@ -86,6 +86,31 @@ export function ProjectsPage() {
   const [activeTab, setActiveTab] = useState<ProjectTab>("workspace");
   const [showInjectMenu, setShowInjectMenu] = useState(false);
 
+  // ── Inline editing states ──
+  const [editingState, setEditingState] = useState(false);
+  const [stateDraft, setStateDraft] = useState({ goal: "", currentStatus: "", currentFocus: "" });
+
+  const [editingOpenLoopIndex, setEditingOpenLoopIndex] = useState<number | null>(null);
+  const [openLoopItemDraft, setOpenLoopItemDraft] = useState({ nextStep: "", risk: "" });
+  const [addingOpenLoop, setAddingOpenLoop] = useState(false);
+
+  const [editingRecent, setEditingRecent] = useState(false);
+  const [recentDraft, setRecentDraft] = useState("");
+
+  const [editingMeta, setEditingMeta] = useState(false);
+  const [metaDraft, setMetaDraft] = useState({ path: "", description: "", notes: "" });
+
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [ruleDraft, setRuleDraft] = useState({ content: "", rationale: "" });
+  const [addingRule, setAddingRule] = useState(false);
+
+  const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
+  const [resourceDraft, setResourceDraft] = useState({ label: "", kind: "doc" as ResourceKind, value: "", note: "" });
+  const [addingResource, setAddingResource] = useState(false);
+
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [eventDraft, setEventDraft] = useState({ title: "", background: "", trigger: "", actions: "", result: "", status: "", nextStep: "", lesson: "", refs: "" });
+  const [addingEvent, setAddingEvent] = useState(false);
 
   useEffect(() => {
     if (!selectedProject) return;
@@ -137,6 +162,7 @@ export function ProjectsPage() {
     await saveProjectObjects(selectedProject, normalized);
   };
 
+  // ── Sync ──
   const handleSyncProject = async () => {
     if (!selectedProject || syncing) return;
     setSyncing(true);
@@ -188,6 +214,7 @@ export function ProjectsPage() {
     }
   };
 
+  // ── Save handlers (inline) ──
   const handleSaveMemory = async () => {
     if (!selectedProject) return;
     await saveProjectMemory(selectedProject, editContent, "手动编辑");
@@ -203,6 +230,108 @@ export function ProjectsPage() {
     setEditingInstructions(false);
   };
 
+  const handleSaveState = async () => {
+    await persistObjects({ ...objects, state: { ...objects.state, goal: stateDraft.goal, currentStatus: stateDraft.currentStatus, currentFocus: stateDraft.currentFocus } });
+    setEditingState(false);
+  };
+
+  const handleSaveOpenLoopItem = async (index?: number) => {
+    if (!openLoopItemDraft.nextStep.trim() && !openLoopItemDraft.risk.trim()) return;
+    const nextSteps = [...objects.state.nextSteps];
+    const risks = [...objects.state.risks];
+    if (index !== undefined) {
+      nextSteps[index] = openLoopItemDraft.nextStep.trim();
+      risks[index] = openLoopItemDraft.risk.trim();
+    } else {
+      nextSteps.push(openLoopItemDraft.nextStep.trim());
+      risks.push(openLoopItemDraft.risk.trim());
+    }
+    await persistObjects({ ...objects, state: { ...objects.state, nextSteps, risks } });
+    setEditingOpenLoopIndex(null);
+    setAddingOpenLoop(false);
+  };
+
+  const deleteOpenLoopItem = async (index: number) => {
+    const nextSteps = objects.state.nextSteps.filter((_, i) => i !== index);
+    const risks = objects.state.risks.filter((_, i) => i !== index);
+    await persistObjects({ ...objects, state: { ...objects.state, nextSteps, risks } });
+  };
+
+  const handleSaveRecent = async () => {
+    if (!selectedProject) return;
+    await saveProjectRecent(selectedProject, recentDraft);
+    setRecentMemory(recentDraft);
+    setEditingRecent(false);
+  };
+
+  const handleSaveMeta = async () => {
+    if (!meta || !selectedProject) return;
+    const nextMeta: ProjectMeta = { ...meta, path: metaDraft.path, description: metaDraft.description, notes: metaDraft.notes };
+    await saveProjectMeta(selectedProject, nextMeta);
+    setMeta(nextMeta);
+    setEditingMeta(false);
+    await refreshProjects();
+  };
+
+  const handleSaveRule = async (existingId?: string) => {
+    if (!ruleDraft.content.trim()) return;
+    const nextItem: ProjectRule = {
+      id: existingId ?? makeObjectId("rule"),
+      content: ruleDraft.content.trim(),
+      rationale: ruleDraft.rationale.trim() || undefined,
+    };
+    if (existingId) {
+      await persistObjects({ ...objects, rules: objects.rules.map((r) => (r.id === existingId ? nextItem : r)) });
+    } else {
+      await persistObjects({ ...objects, rules: [nextItem, ...objects.rules] });
+    }
+    setEditingRuleId(null);
+    setAddingRule(false);
+  };
+
+  const handleSaveResource = async (existingId?: string) => {
+    if (!resourceDraft.label.trim() || !resourceDraft.value.trim()) return;
+    const nextItem: ProjectResource = {
+      id: existingId ?? makeObjectId("resource"),
+      label: resourceDraft.label.trim(),
+      kind: resourceDraft.kind,
+      value: resourceDraft.value.trim(),
+      note: resourceDraft.note.trim() || undefined,
+    };
+    if (existingId) {
+      await persistObjects({ ...objects, resources: objects.resources.map((r) => (r.id === existingId ? nextItem : r)) });
+    } else {
+      await persistObjects({ ...objects, resources: [nextItem, ...objects.resources] });
+    }
+    setEditingResourceId(null);
+    setAddingResource(false);
+  };
+
+  const handleSaveEvent = async (existingId?: string) => {
+    if (!eventDraft.title.trim()) return;
+    const nextEvent = {
+      id: existingId ?? makeObjectId("event"),
+      title: eventDraft.title.trim(),
+      time: new Date().toISOString().slice(0, 10),
+      background: eventDraft.background.trim(),
+      trigger: eventDraft.trigger.trim(),
+      actions: eventDraft.actions.split("\n").map((s) => s.trim()).filter(Boolean),
+      result: eventDraft.result.trim(),
+      status: eventDraft.status.trim(),
+      nextStep: eventDraft.nextStep.trim(),
+      lesson: eventDraft.lesson.trim(),
+      refs: eventDraft.refs.split("\n").map((s) => s.trim()).filter(Boolean),
+    };
+    if (existingId) {
+      await persistObjects({ ...objects, events: objects.events.map((e) => (e.id === existingId ? nextEvent : e)) });
+    } else {
+      await persistObjects({ ...objects, events: [nextEvent, ...objects.events] });
+    }
+    setEditingEventId(null);
+    setAddingEvent(false);
+  };
+
+  // ── Delete handlers ──
   const handleDeleteProject = async (alias: string) => {
     await deleteProject(alias);
     setSelectedProject(null);
@@ -240,25 +369,19 @@ export function ProjectsPage() {
 
   const handleRestoreVersion = async (filename: string) => {
     if (!selectedProject) return;
-    const version = versions.find(v => v.filename === filename);
+    const version = versions.find((v) => v.filename === filename);
     if (!version) return;
-
-    // 更新为当前版本
     await setVersionAsCurrent(selectedProject, filename);
-
-    // 显示版本内容（需要 normalize）
     setViewingVersion(null);
     setObjects(normalizeProjectObjects(version.snapshot.objects));
     setProjectInstructions(version.snapshot.instructions || "");
-
-    // 只重新加载 meta 和 versions
     setMeta(await loadProjectMeta(selectedProject));
     await loadProjectVersions(selectedProject);
   };
 
   const handleViewVersion = async (filename: string) => {
     if (!selectedProject) return;
-    const version = versions.find(v => v.filename === filename);
+    const version = versions.find((v) => v.filename === filename);
     if (version) {
       setViewingVersion(version);
       setObjects(version.snapshot.objects);
@@ -272,84 +395,7 @@ export function ProjectsPage() {
     await loadProjectVersions(selectedProject);
   };
 
-  const promptText = (message: string, initial = "") => {
-    const value = window.prompt(message, initial);
-    return value === null ? null : value.trim();
-  };
-
-  const promptList = (message: string, items: string[]) => {
-    const value = window.prompt(`${message}（用 | 分隔多项）`, items.join(" | "));
-    if (value === null) return null;
-    return value.split("|").map((item) => item.trim()).filter(Boolean);
-  };
-
   const confirmDanger = (message: string) => confirmDialog(message);
-
-  const editProjectState = async () => {
-    const current = objects.state;
-    const goal = promptText("项目当前核心目标", current.goal);
-    if (goal === null) return;
-    const currentStatus = promptText("当前状态", current.currentStatus);
-    if (currentStatus === null) return;
-    const currentFocus = promptText("当前焦点", current.currentFocus);
-    if (currentFocus === null) return;
-    const nextSteps = promptList("未闭环事项 / 下一步", current.nextSteps);
-    if (nextSteps === null) return;
-    const risks = promptList("阻塞 / 风险", current.risks);
-    if (risks === null) return;
-    await persistObjects({ ...objects, state: { goal, currentStatus, currentFocus, nextSteps, risks } });
-  };
-
-  const promptRule = async (rule?: ProjectRule) => {
-    const content = promptText("规则 / 偏好 / 约束", rule?.content ?? "");
-    if (content === null || !content) return;
-    const rationale = promptText("补充说明（可选）", rule?.rationale ?? "");
-    if (rationale === null) return;
-    const nextItem: ProjectRule = {
-      id: rule?.id ?? makeObjectId("rule"),
-      content,
-      rationale: rationale || undefined,
-    };
-    await persistObjects({
-      ...objects,
-      rules: rule ? objects.rules.map((item) => (item.id === rule.id ? nextItem : item)) : [nextItem, ...objects.rules],
-    });
-  };
-  const promptResource = async (resource?: ProjectResource) => {
-    const label = promptText("资料名", resource?.label ?? "");
-    if (label === null || !label) return;
-    const kindInput = promptText("类型：path / command / url / doc / env", resource?.kind ?? "doc");
-    if (kindInput === null) return;
-    const value = promptText("内容", resource?.value ?? "");
-    if (value === null || !value) return;
-    const note = promptText("说明（可选）", resource?.note ?? "");
-    if (note === null) return;
-    const nextItem: ProjectResource = {
-      id: resource?.id ?? makeObjectId("resource"),
-      label,
-      kind: normalizeResourceKindInput(kindInput),
-      value,
-      note: note || undefined,
-    };
-    await persistObjects({
-      ...objects,
-      resources: resource ? objects.resources.map((item) => (item.id === resource.id ? nextItem : item)) : [nextItem, ...objects.resources],
-    });
-  };
-
-  const promptMetaEdit = async () => {
-    if (!meta || !selectedProject) return;
-    const path = promptText("项目路径", meta.path);
-    if (path === null || !path) return;
-    const description = promptText("项目描述", meta.description ?? "");
-    if (description === null) return;
-    const notes = promptText("备注", meta.notes ?? "");
-    if (notes === null) return;
-    const nextMeta: ProjectMeta = { ...meta, path, description, notes };
-    await saveProjectMeta(selectedProject, nextMeta);
-    setMeta(nextMeta);
-    await refreshProjects();
-  };
 
   const deleteRule = async (id: string) => {
     await persistObjects({ ...objects, rules: objects.rules.filter((item) => item.id !== id) });
@@ -359,6 +405,91 @@ export function ProjectsPage() {
     await persistObjects({ ...objects, resources: objects.resources.filter((item) => item.id !== id) });
   };
 
+  // ── Start editing helpers ──
+  const startEditState = () => {
+    setStateDraft({
+      goal: objects.state.goal,
+      currentStatus: objects.state.currentStatus,
+      currentFocus: objects.state.currentFocus,
+    });
+    setEditingState(true);
+  };
+
+  const startEditOpenLoopItem = (index: number) => {
+    setOpenLoopItemDraft({
+      nextStep: objects.state.nextSteps[index] ?? "",
+      risk: objects.state.risks[index] ?? "",
+    });
+    setEditingOpenLoopIndex(index);
+    setAddingOpenLoop(false);
+  };
+
+  const startAddOpenLoop = () => {
+    setOpenLoopItemDraft({ nextStep: "", risk: "" });
+    setAddingOpenLoop(true);
+    setEditingOpenLoopIndex(null);
+  };
+
+  const startEditRecent = () => {
+    setRecentDraft(recentMemory);
+    setEditingRecent(true);
+  };
+
+  const startEditMeta = () => {
+    if (!meta) return;
+    setMetaDraft({ path: meta.path, description: meta.description ?? "", notes: meta.notes ?? "" });
+    setEditingMeta(true);
+  };
+
+  const startEditRule = (rule: ProjectRule) => {
+    setRuleDraft({ content: rule.content, rationale: rule.rationale ?? "" });
+    setEditingRuleId(rule.id);
+    setAddingRule(false);
+  };
+
+  const startAddRule = () => {
+    setRuleDraft({ content: "", rationale: "" });
+    setAddingRule(true);
+    setEditingRuleId(null);
+  };
+
+  const startEditResource = (resource: ProjectResource) => {
+    setResourceDraft({ label: resource.label, kind: resource.kind, value: resource.value, note: resource.note ?? "" });
+    setEditingResourceId(resource.id);
+    setAddingResource(false);
+  };
+
+  const startAddResource = () => {
+    setResourceDraft({ label: "", kind: "doc", value: "", note: "" });
+    setAddingResource(true);
+    setEditingResourceId(null);
+  };
+
+  const startEditEvent = (event: ProjectObjects["events"][number]) => {
+    setEventDraft({
+      title: event.title,
+      background: event.background ?? "",
+      trigger: event.trigger ?? "",
+      actions: event.actions.join("\n"),
+      result: event.result ?? "",
+      status: event.status ?? "",
+      nextStep: event.nextStep ?? "",
+      lesson: event.lesson ?? "",
+      refs: event.refs.join("\n"),
+    });
+    setEditingEventId(event.id);
+    setAddingEvent(false);
+  };
+
+  const startAddEvent = () => {
+    setEventDraft({ title: "", background: "", trigger: "", actions: "", result: "", status: "", nextStep: "", lesson: "", refs: "" });
+    setAddingEvent(true);
+    setEditingEventId(null);
+  };
+
+  // ══════════════════════════════════════════════
+  // ── Render: Project List ──
+  // ══════════════════════════════════════════════
   if (!selectedProject) {
     return (
       <div className="h-full overflow-y-auto p-6 space-y-4">
@@ -404,7 +535,7 @@ export function ProjectsPage() {
                     onClick={async (event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      if (await confirmDanger(`确定删除项目“${project.alias}”？`)) {
+                      if (await confirmDanger(`确定删除项目"${project.alias}"？`)) {
                         handleDeleteProject(project.alias).catch(console.error);
                       }
                     }}
@@ -423,8 +554,12 @@ export function ProjectsPage() {
     );
   }
 
+  // ══════════════════════════════════════════════
+  // ── Render: Project Detail ──
+  // ══════════════════════════════════════════════
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <button
           onClick={() => {
@@ -477,18 +612,8 @@ export function ProjectsPage() {
             </button>
             {showInjectMenu && (
               <div className="absolute right-0 top-full mt-1 w-32 rounded-lg border border-border bg-card shadow-lg z-10">
-                <button
-                  onClick={() => handleInjectMemory("CLAUDE.md")}
-                  className="w-full px-3 py-2 text-xs text-left hover:bg-secondary transition-colors rounded-t-lg"
-                >
-                  CLAUDE.md
-                </button>
-                <button
-                  onClick={() => handleInjectMemory("AGENTS.md")}
-                  className="w-full px-3 py-2 text-xs text-left hover:bg-secondary transition-colors rounded-b-lg"
-                >
-                  AGENTS.md
-                </button>
+                <button onClick={() => handleInjectMemory("CLAUDE.md")} className="w-full px-3 py-2 text-xs text-left hover:bg-secondary transition-colors rounded-t-lg">CLAUDE.md</button>
+                <button onClick={() => handleInjectMemory("AGENTS.md")} className="w-full px-3 py-2 text-xs text-left hover:bg-secondary transition-colors rounded-b-lg">AGENTS.md</button>
               </div>
             )}
           </div>
@@ -516,7 +641,7 @@ export function ProjectsPage() {
           </button>
           <button
             onClick={async () => {
-              if (await confirmDanger(`确定清空项目“${selectedProject}”的全部记忆内容？`)) {
+              if (await confirmDanger(`确定清空项目"${selectedProject}"的全部记忆内容？`)) {
                 handleClearProject().catch(console.error);
               }
             }}
@@ -527,7 +652,7 @@ export function ProjectsPage() {
           </button>
           <button
             onClick={async () => {
-              if (await confirmDanger(`确定删除项目“${selectedProject}”？`)) {
+              if (await confirmDanger(`确定删除项目"${selectedProject}"？`)) {
                 handleDeleteProject(selectedProject).catch(console.error);
               }
             }}
@@ -539,6 +664,7 @@ export function ProjectsPage() {
         </div>
       </div>
 
+      {/* Tabs */}
       <div className="flex w-fit flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-1">
         {[["workspace", "工作台"], ["memory", "长期记忆"], ["distill", "事件"], ["manual", "用户维护"]].map(([key, label]) => (
           <button key={key} onClick={() => setActiveTab(key as ProjectTab)} className={`rounded-lg px-3 py-1.5 text-xs transition-colors ${activeTab === key ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
@@ -546,6 +672,7 @@ export function ProjectsPage() {
           </button>
         ))}
       </div>
+
       {showImport && (
         <ImportPanel
           projectAlias={selectedProject}
@@ -561,7 +688,7 @@ export function ProjectsPage() {
           <h3 className="mb-3 text-sm font-medium">版本历史</h3>
           <div className="max-h-56 space-y-1.5 overflow-y-auto">
             {versions.map((version) => (
-              <div key={version.filename} className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${version.version === meta?.currentVersion ? 'bg-primary/10 border border-primary/20' : 'bg-secondary/50'}`}>
+              <div key={version.filename} className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${version.version === meta?.currentVersion ? "bg-primary/10 border border-primary/20" : "bg-secondary/50"}`}>
                 <div className="min-w-0 flex-1 pr-3">
                   <div className="flex items-center gap-2">
                     <div className="font-mono">v{version.version}</div>
@@ -595,110 +722,355 @@ export function ProjectsPage() {
         </div>
       )}
 
+      {/* ════════════════════════════════════════ */}
+      {/* ── Tab: 工作台 ── */}
+      {/* ════════════════════════════════════════ */}
       {activeTab === "workspace" && (
         <div className="space-y-4">
+          {/* 当前局面 */}
           <div className="rounded-2xl border border-border bg-card p-5">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Project State</div>
                 <h2 className="mt-1 text-lg font-semibold">当前局面</h2>
               </div>
-              <button onClick={editProjectState} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
-                <Pencil size={12} />
-                编辑
-              </button>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-3">
-              <StateBlock label="核心目标" value={objects.state.goal} empty="还没有明确记录当前核心目标。" icon={<Target size={14} />} />
-              <StateBlock label="当前状态" value={objects.state.currentStatus} empty="还没有明确记录当前状态。" icon={<FileText size={14} />} />
-              <StateBlock label="当前焦点" value={objects.state.currentFocus} empty="还没有明确记录当前焦点。" icon={<RefreshCw size={14} />} />
-            </div>
-          </div>
-
-          <EntitySection
-            title="未闭环事项"
-            icon={<AlertTriangle size={14} />}
-            empty="暂无未闭环事项。"
-            items={buildOpenLoopItems(objects.state.nextSteps, objects.state.risks).map((item, index) => ({
-              id: `open-loop-${index}`,
-              title: item.title,
-              description: item.description,
-            }))}
-          />
-
-          <div className="rounded-xl border border-border bg-card p-4">
-            <div className="mb-3 text-sm font-medium">近期动态</div>
-            {recentMemory && recentMemory.trim() !== "# 近期动态" ? <MarkdownView content={recentMemory} /> : <p className="text-xs text-muted-foreground">暂无近期动态。</p>}
-          </div>
-        </div>
-      )}
-
-      {activeTab === "memory" && (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-sm font-medium">项目元信息</div>
-              {meta && (
-                <button onClick={() => promptMetaEdit().catch(console.error)} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+              {editingState ? (
+                <div className="flex gap-1.5">
+                  <button onClick={handleSaveState} className="flex items-center gap-1 rounded bg-primary px-2 py-1 text-xs text-primary-foreground hover:opacity-90">
+                    <Save size={10} />
+                    保存
+                  </button>
+                  <button onClick={() => setEditingState(false)} className="rounded border border-border px-2 py-1 text-xs hover:bg-secondary">取消</button>
+                </div>
+              ) : (
+                <button onClick={startEditState} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
                   <Pencil size={12} />
                   编辑
                 </button>
               )}
             </div>
-            {meta ? (
-              <div className="space-y-2 text-xs">
-                <InfoRow label="路径" value={meta.path} mono />
-                <InfoRow label="状态" value={meta.status === "active" ? "活跃" : "归档"} />
-                <InfoRow label="版本" value={`v${meta.currentVersion}`} />
-                <InfoRow label="最后同步" value={meta.lastSync ? new Date(meta.lastSync).toLocaleString() : "从未"} />
-                {meta.description && <InfoBlock label="描述" value={meta.description} />}
-                {meta.notes && <InfoBlock label="备注" value={meta.notes} muted />}
+
+            {editingState ? (
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="rounded-xl border border-border bg-background px-4 py-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground"><Target size={14} />核心目标</div>
+                  <textarea value={stateDraft.goal} onChange={(e) => setStateDraft({ ...stateDraft, goal: e.target.value })} rows={3} className="w-full rounded-lg border border-border bg-secondary px-3 py-1.5 text-sm outline-none focus:border-primary resize-none" placeholder="核心目标..." />
+                </div>
+                <div className="rounded-xl border border-border bg-background px-4 py-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground"><FileText size={14} />当前状态</div>
+                  <textarea value={stateDraft.currentStatus} onChange={(e) => setStateDraft({ ...stateDraft, currentStatus: e.target.value })} rows={3} className="w-full rounded-lg border border-border bg-secondary px-3 py-1.5 text-sm outline-none focus:border-primary resize-none" placeholder="当前状态..." />
+                </div>
+                <div className="rounded-xl border border-border bg-background px-4 py-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground"><RefreshCw size={14} />当前焦点</div>
+                  <textarea value={stateDraft.currentFocus} onChange={(e) => setStateDraft({ ...stateDraft, currentFocus: e.target.value })} rows={3} className="w-full rounded-lg border border-border bg-secondary px-3 py-1.5 text-sm outline-none focus:border-primary resize-none" placeholder="当前焦点..." />
+                </div>
               </div>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-3">
+                <StateBlock label="核心目标" value={objects.state.goal} empty="还没有明确记录当前核心目标。" icon={<Target size={14} />} />
+                <StateBlock label="当前状态" value={objects.state.currentStatus} empty="还没有明确记录当前状态。" icon={<FileText size={14} />} />
+                <StateBlock label="当前焦点" value={objects.state.currentFocus} empty="还没有明确记录当前焦点。" icon={<RefreshCw size={14} />} />
+              </div>
+            )}
+          </div>
+
+          {/* 未闭环事项 */}
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <AlertTriangle size={14} />
+                  未闭环事项
+                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{buildOpenLoopItems(objects.state.nextSteps, objects.state.risks).length}</span>
+                </div>
+              </div>
+              <button onClick={startAddOpenLoop} className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs transition-colors hover:bg-secondary">
+                <Plus size={11} />
+                新增
+              </button>
+            </div>
+
+            {addingOpenLoop && (
+              <div className="mb-3 space-y-2 rounded-xl border border-primary/30 bg-background p-3">
+                <InlineField label="事项内容" value={openLoopItemDraft.nextStep} onChange={(v) => setOpenLoopItemDraft({ ...openLoopItemDraft, nextStep: v })} />
+                <InlineField label="阻塞/风险（可选）" value={openLoopItemDraft.risk} onChange={(v) => setOpenLoopItemDraft({ ...openLoopItemDraft, risk: v })} />
+                <div className="flex gap-1.5">
+                  <button onClick={() => handleSaveOpenLoopItem()} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"><Save size={10} />保存</button>
+                  <button onClick={() => setAddingOpenLoop(false)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                </div>
+              </div>
+            )}
+
+            {buildOpenLoopItems(objects.state.nextSteps, objects.state.risks).length > 0 ? (
+              <div className="space-y-2">
+                {buildOpenLoopItems(objects.state.nextSteps, objects.state.risks).map((item, index) => (
+                  <div key={index} className="rounded-xl border border-border bg-background px-3 py-3">
+                    {editingOpenLoopIndex === index ? (
+                      <div className="space-y-2">
+                        <InlineField label="事项内容" value={openLoopItemDraft.nextStep} onChange={(v) => setOpenLoopItemDraft({ ...openLoopItemDraft, nextStep: v })} />
+                        <InlineField label="阻塞/风险（可选）" value={openLoopItemDraft.risk} onChange={(v) => setOpenLoopItemDraft({ ...openLoopItemDraft, risk: v })} />
+                        <div className="flex gap-1.5">
+                          <button onClick={() => handleSaveOpenLoopItem(index)} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"><Save size={10} />保存</button>
+                          <button onClick={() => setEditingOpenLoopIndex(null)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium leading-6 break-words">{item.title}</div>
+                          {item.description && <p className="mt-2 text-xs leading-6 text-muted-foreground">{item.description}</p>}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button onClick={() => startEditOpenLoopItem(index)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="编辑"><Pencil size={12} /></button>
+                          <button
+                            onClick={async () => { if (await confirmDanger("删除这条事项？")) deleteOpenLoopItem(index).catch(console.error); }}
+                            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500" title="删除"
+                          ><Trash2 size={12} /></button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">暂无未闭环事项。</p>
+            )}
+          </div>
+
+          {/* 近期动态 */}
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-medium">近期动态</div>
+              {editingRecent ? (
+                <div className="flex gap-1.5">
+                  <button onClick={handleSaveRecent} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90">
+                    <Save size={10} />
+                    保存
+                  </button>
+                  <button onClick={() => setEditingRecent(false)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                </div>
+              ) : (
+                <button onClick={startEditRecent} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                  <Pencil size={10} />
+                  编辑
+                </button>
+              )}
+            </div>
+            {editingRecent ? (
+              <textarea value={recentDraft} onChange={(e) => setRecentDraft(e.target.value)} className="h-64 w-full resize-none bg-transparent font-mono text-sm outline-none" placeholder="输入近期动态..." />
+            ) : recentMemory && recentMemory.trim() !== "# 近期动态" ? (
+              <MarkdownView content={recentMemory} />
+            ) : (
+              <p className="text-xs text-muted-foreground">暂无近期动态。</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════ */}
+      {/* ── Tab: 长期记忆 ── */}
+      {/* ════════════════════════════════════════ */}
+      {activeTab === "memory" && (
+        <div className="space-y-4">
+          {/* 元信息 */}
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-medium">项目元信息</div>
+              {meta && (
+                editingMeta ? (
+                  <div className="flex gap-1.5">
+                    <button onClick={handleSaveMeta} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90">
+                      <Save size={10} />
+                      保存
+                    </button>
+                    <button onClick={() => setEditingMeta(false)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                  </div>
+                ) : (
+                  <button onClick={startEditMeta} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                    <Pencil size={12} />
+                    编辑
+                  </button>
+                )
+              )}
+            </div>
+            {meta ? (
+              editingMeta ? (
+                <div className="space-y-3">
+                  <InlineField label="路径" value={metaDraft.path} onChange={(v) => setMetaDraft({ ...metaDraft, path: v })} mono />
+                  <InlineField label="描述" value={metaDraft.description} onChange={(v) => setMetaDraft({ ...metaDraft, description: v })} />
+                  <InlineTextarea label="备注" value={metaDraft.notes} onChange={(v) => setMetaDraft({ ...metaDraft, notes: v })} rows={3} />
+                </div>
+              ) : (
+                <div className="space-y-2 text-xs">
+                  <InfoRow label="路径" value={meta.path} mono />
+                  <InfoRow label="状态" value={meta.status === "active" ? "活跃" : "归档"} />
+                  <InfoRow label="版本" value={`v${meta.currentVersion}`} />
+                  <InfoRow label="最后同步" value={meta.lastSync ? new Date(meta.lastSync).toLocaleString() : "从未"} />
+                  {meta.description && <InfoBlock label="描述" value={meta.description} />}
+                  {meta.notes && <InfoBlock label="备注" value={meta.notes} muted />}
+                </div>
+              )
             ) : (
               <p className="text-xs text-muted-foreground">暂无元信息。</p>
             )}
           </div>
 
-          <EntitySection
-            title="长期规则"
-            icon={<Target size={14} />}
-            description="这里只放长期使用的规则、偏好、红线和稳定约束，不放当前一两次任务里的临时说法。"
-            empty="暂无规则。"
-            onAdd={() => promptRule().catch(console.error)}
-            items={objects.rules.map((rule) => ({
-              id: rule.id,
-              title: rule.content,
-              description: rule.rationale,
-              onEdit: () => promptRule(rule).catch(console.error),
-              onDelete: async () => {
-                if (await confirmDanger("删除这条规则？")) {
-                  deleteRule(rule.id).catch(console.error);
-                }
-              },
-            }))}
-          />
+          {/* 长期规则 */}
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Target size={14} />
+                  长期规则
+                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{objects.rules.length}</span>
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-muted-foreground">这里只放长期使用的规则、偏好、红线和稳定约束，不放当前一两次任务里的临时说法。</p>
+              </div>
+              <button onClick={startAddRule} className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs transition-colors hover:bg-secondary">
+                <Plus size={11} />
+                新增
+              </button>
+            </div>
 
-          <EntitySection
-            title="关键资料"
-            icon={<Link2 size={14} />}
-            description="这里只收以后真的会查、会用、会复用的路径、命令、文档和环境信息。"
-            empty="暂无关键资料。"
-            onAdd={() => promptResource().catch(console.error)}
-            items={objects.resources.map((resource) => ({
-              id: resource.id,
-              title: resource.label,
-              meta: kindLabel(resource.kind),
-              description: `${resource.value}${resource.note ? `\n说明：${resource.note}` : ""}`,
-              mono: resource.kind === "path" || resource.kind === "command" || resource.kind === "env",
-              onEdit: () => promptResource(resource).catch(console.error),
-              onDelete: async () => {
-                if (await confirmDanger("删除这条资料？")) {
-                  deleteResource(resource.id).catch(console.error);
-                }
-              },
-            }))}
-          />
+            {addingRule && (
+              <div className="mb-3 space-y-2 rounded-xl border border-primary/30 bg-background p-3">
+                <InlineField label="规则内容" value={ruleDraft.content} onChange={(v) => setRuleDraft({ ...ruleDraft, content: v })} />
+                <InlineField label="补充说明（可选）" value={ruleDraft.rationale} onChange={(v) => setRuleDraft({ ...ruleDraft, rationale: v })} />
+                <div className="flex gap-1.5">
+                  <button onClick={() => handleSaveRule()} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"><Save size={10} />保存</button>
+                  <button onClick={() => setAddingRule(false)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                </div>
+              </div>
+            )}
 
+            {objects.rules.length > 0 ? (
+              <div className="space-y-2">
+                {objects.rules.map((rule) => (
+                  <div key={rule.id} className="rounded-xl border border-border bg-background px-3 py-3">
+                    {editingRuleId === rule.id ? (
+                      <div className="space-y-2">
+                        <InlineField label="规则内容" value={ruleDraft.content} onChange={(v) => setRuleDraft({ ...ruleDraft, content: v })} />
+                        <InlineField label="补充说明（可选）" value={ruleDraft.rationale} onChange={(v) => setRuleDraft({ ...ruleDraft, rationale: v })} />
+                        <div className="flex gap-1.5">
+                          <button onClick={() => handleSaveRule(rule.id)} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"><Save size={10} />保存</button>
+                          <button onClick={() => setEditingRuleId(null)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium leading-6 break-words">{rule.content}</div>
+                          {rule.rationale && <p className="mt-2 text-xs leading-6 text-muted-foreground">{rule.rationale}</p>}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button onClick={() => startEditRule(rule)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="编辑"><Pencil size={12} /></button>
+                          <button
+                            onClick={async () => { if (await confirmDanger("删除这条规则？")) deleteRule(rule.id).catch(console.error); }}
+                            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500" title="删除"
+                          ><Trash2 size={12} /></button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">暂无规则。</p>
+            )}
+          </div>
+
+          {/* 关键资料 */}
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Link2 size={14} />
+                  关键资料
+                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{objects.resources.length}</span>
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-muted-foreground">这里只收以后真的会查、会用、会复用的路径、命令、文档和环境信息。</p>
+              </div>
+              <button onClick={startAddResource} className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs transition-colors hover:bg-secondary">
+                <Plus size={11} />
+                新增
+              </button>
+            </div>
+
+            {addingResource && (
+              <div className="mb-3 space-y-2 rounded-xl border border-primary/30 bg-background p-3">
+                <InlineField label="资料名" value={resourceDraft.label} onChange={(v) => setResourceDraft({ ...resourceDraft, label: v })} />
+                <div>
+                  <label className="mb-1 block text-[11px] text-muted-foreground">类型</label>
+                  <select value={resourceDraft.kind} onChange={(e) => setResourceDraft({ ...resourceDraft, kind: e.target.value as ResourceKind })} className="w-full rounded-lg border border-border bg-secondary px-3 py-1.5 text-sm outline-none focus:border-primary">
+                    <option value="path">路径</option>
+                    <option value="command">命令</option>
+                    <option value="url">链接</option>
+                    <option value="doc">文档</option>
+                    <option value="env">环境</option>
+                  </select>
+                </div>
+                <InlineField label="内容" value={resourceDraft.value} onChange={(v) => setResourceDraft({ ...resourceDraft, value: v })} mono />
+                <InlineField label="说明（可选）" value={resourceDraft.note} onChange={(v) => setResourceDraft({ ...resourceDraft, note: v })} />
+                <div className="flex gap-1.5">
+                  <button onClick={() => handleSaveResource()} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"><Save size={10} />保存</button>
+                  <button onClick={() => setAddingResource(false)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                </div>
+              </div>
+            )}
+
+            {objects.resources.length > 0 ? (
+              <div className="space-y-2">
+                {objects.resources.map((resource) => (
+                  <div key={resource.id} className="rounded-xl border border-border bg-background px-3 py-3">
+                    {editingResourceId === resource.id ? (
+                      <div className="space-y-2">
+                        <InlineField label="资料名" value={resourceDraft.label} onChange={(v) => setResourceDraft({ ...resourceDraft, label: v })} />
+                        <div>
+                          <label className="mb-1 block text-[11px] text-muted-foreground">类型</label>
+                          <select value={resourceDraft.kind} onChange={(e) => setResourceDraft({ ...resourceDraft, kind: e.target.value as ResourceKind })} className="w-full rounded-lg border border-border bg-secondary px-3 py-1.5 text-sm outline-none focus:border-primary">
+                            <option value="path">路径</option>
+                            <option value="command">命令</option>
+                            <option value="url">链接</option>
+                            <option value="doc">文档</option>
+                            <option value="env">环境</option>
+                          </select>
+                        </div>
+                        <InlineField label="内容" value={resourceDraft.value} onChange={(v) => setResourceDraft({ ...resourceDraft, value: v })} mono />
+                        <InlineField label="说明（可选）" value={resourceDraft.note} onChange={(v) => setResourceDraft({ ...resourceDraft, note: v })} />
+                        <div className="flex gap-1.5">
+                          <button onClick={() => handleSaveResource(resource.id)} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"><Save size={10} />保存</button>
+                          <button onClick={() => setEditingResourceId(null)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start gap-2">
+                            <div className="min-w-0 flex-1 text-sm font-medium leading-6 break-words">{resource.label}</div>
+                            <span className="whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{kindLabel(resource.kind)}</span>
+                          </div>
+                          <p className={`mt-2 whitespace-pre-line text-xs leading-6 text-muted-foreground ${resource.kind === "path" || resource.kind === "command" || resource.kind === "env" ? "font-mono" : ""}`}>
+                            {resource.value}{resource.note ? `\n说明：${resource.note}` : ""}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button onClick={() => startEditResource(resource)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="编辑"><Pencil size={12} /></button>
+                          <button
+                            onClick={async () => { if (await confirmDanger("删除这条资料？")) deleteResource(resource.id).catch(console.error); }}
+                            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500" title="删除"
+                          ><Trash2 size={12} /></button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">暂无关键资料。</p>
+            )}
+          </div>
+
+          {/* 原始长记忆 */}
           <div className="rounded-xl border border-border bg-card p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
@@ -736,24 +1108,96 @@ export function ProjectsPage() {
           </div>
         </div>
       )}
+
+      {/* ════════════════════════════════════════ */}
+      {/* ── Tab: 事件 ── */}
+      {/* ════════════════════════════════════════ */}
       {activeTab === "distill" && (
         <div className="space-y-4">
-          <EntitySection
-            title="事件"
-            icon={<Clock size={14} />}
-            description="事件是一次重要闭环，包含时间、起因、动作、结果和证据。"
-            empty="暂无事件。"
-            items={buildEpisodeCards(objects.events, async (eventId) => {
-              if (await confirmDanger("确定删除此事件？")) {
-                const updated = { ...objects, events: objects.events.filter(e => e.id !== eventId) };
-                await saveProjectObjects(selectedProject, updated);
-                setObjects(updated);
-              }
-            })}
-          />
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Clock size={14} />
+                  事件
+                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{objects.events.length}</span>
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-muted-foreground">事件是一次重要闭环，包含时间、起因、动作、结果和证据。</p>
+              </div>
+              <button onClick={startAddEvent} className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs transition-colors hover:bg-secondary">
+                <Plus size={11} />
+                新增
+              </button>
+            </div>
+
+            {addingEvent && (
+              <div className="mb-3 space-y-2 rounded-xl border border-primary/30 bg-background p-3">
+                <EventForm draft={eventDraft} onChange={setEventDraft} />
+                <div className="flex gap-1.5">
+                  <button onClick={() => handleSaveEvent()} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"><Save size={10} />保存</button>
+                  <button onClick={() => setAddingEvent(false)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                </div>
+              </div>
+            )}
+
+            {objects.events.length > 0 ? (
+              <div className="space-y-2">
+                {objects.events.map((event) => (
+                  <div key={event.id} className="rounded-xl border border-border bg-background px-3 py-3">
+                    {editingEventId === event.id ? (
+                      <div className="space-y-2">
+                        <EventForm draft={eventDraft} onChange={setEventDraft} />
+                        <div className="flex gap-1.5">
+                          <button onClick={() => handleSaveEvent(event.id)} className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"><Save size={10} />保存</button>
+                          <button onClick={() => setEditingEventId(null)} className="rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary">取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start gap-2">
+                            <div className="min-w-0 flex-1 text-sm font-medium leading-6 break-words">{event.title}</div>
+                            {event.time && <span className="whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{event.time}</span>}
+                          </div>
+                          <p className="mt-2 whitespace-pre-line text-xs leading-6 text-muted-foreground">
+                            {[
+                              event.background ? `背景：${event.background}` : "",
+                              event.trigger ? `起因：${event.trigger}` : "",
+                              event.actions.length > 0 ? `动作：${event.actions.join("；")}` : "",
+                              event.result ? `结果：${event.result}` : "",
+                              event.status ? `当前状态：${event.status}` : "",
+                              event.nextStep ? `下一步：${event.nextStep}` : "",
+                              event.lesson ? `结论：${event.lesson}` : "",
+                              event.refs.length > 0 ? `证据：${event.refs.join("；")}` : "",
+                            ].filter(Boolean).join("\n")}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button onClick={() => startEditEvent(event)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="编辑"><Pencil size={12} /></button>
+                          <button
+                            onClick={async () => {
+                              if (await confirmDanger("确定删除此事件？")) {
+                                await persistObjects({ ...objects, events: objects.events.filter((e) => e.id !== event.id) });
+                              }
+                            }}
+                            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500" title="删除"
+                          ><Trash2 size={12} /></button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">暂无事件。</p>
+            )}
+          </div>
         </div>
       )}
 
+      {/* ════════════════════════════════════════ */}
+      {/* ── Tab: 用户维护 ── */}
+      {/* ════════════════════════════════════════ */}
       {activeTab === "manual" && (
         <div className="rounded-xl border border-border bg-card p-4 min-h-[420px]">
           <div className="mb-2 flex items-center justify-between">
@@ -796,6 +1240,10 @@ export function ProjectsPage() {
   );
 }
 
+// ══════════════════════════════════════════════
+// ── Helper functions ──
+// ══════════════════════════════════════════════
+
 function createEmptyProjectObjects(): ProjectObjects {
   return {
     state: { goal: "", currentStatus: "", currentFocus: "", nextSteps: [], risks: [] },
@@ -826,11 +1274,6 @@ function makeObjectId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function normalizeResourceKindInput(value: string): ResourceKind {
-  const normalized = value.trim().toLowerCase();
-  return normalized === "path" || normalized === "command" || normalized === "url" || normalized === "doc" || normalized === "env" ? normalized : "doc";
-}
-
 function kindLabel(kind: ResourceKind): string {
   return kind === "path" ? "路径" : kind === "command" ? "命令" : kind === "url" ? "链接" : kind === "env" ? "环境" : "文档";
 }
@@ -838,7 +1281,6 @@ function kindLabel(kind: ResourceKind): string {
 function buildOpenLoopItems(nextSteps: string[], risks: string[]): Array<{ title: string; description?: string }> {
   const size = Math.max(nextSteps.length, risks.length);
   const items: Array<{ title: string; description?: string }> = [];
-
   for (let index = 0; index < size; index += 1) {
     const nextStep = nextSteps[index] ?? "";
     const risk = risks[index] ?? "";
@@ -849,27 +1291,45 @@ function buildOpenLoopItems(nextSteps: string[], risks: string[]): Array<{ title
       description: nextStep && risk ? `阻塞：${risk}` : nextStep ? undefined : `阻塞：${risk}`,
     });
   }
-
   return items;
 }
 
-function buildEpisodeCards(events: ProjectObjects["events"], onDelete?: (id: string) => void): Array<{ id: string; title: string; description?: string; meta?: string; onDelete?: () => void }> {
-  return events.map((event) => ({
-    id: event.id,
-    title: event.title,
-    meta: event.time ? `${event.time}` : "事件",
-    description: [
-      event.background ? `背景：${event.background}` : "",
-      event.trigger ? `起因：${event.trigger}` : "",
-      event.actions.length > 0 ? `动作：${event.actions.join("；")}` : "",
-      event.result ? `结果：${event.result}` : "",
-      event.status ? `当前状态：${event.status}` : "",
-      event.nextStep ? `下一步：${event.nextStep}` : "",
-      event.lesson ? `结论：${event.lesson}` : "",
-      event.refs.length > 0 ? `证据：${event.refs.join("；")}` : "",
-    ].filter(Boolean).join("\n"),
-    onDelete: onDelete ? () => onDelete(event.id) : undefined,
-  }));
+// ══════════════════════════════════════════════
+// ── Sub-components ──
+// ══════════════════════════════════════════════
+
+function InlineField({ label, value, onChange, mono = false }: { label: string; value: string; onChange: (v: string) => void; mono?: boolean }) {
+  return (
+    <div>
+      <label className="mb-1 block text-[11px] text-muted-foreground">{label}</label>
+      <input type="text" value={value} onChange={(e) => onChange(e.target.value)} className={`w-full rounded-lg border border-border bg-secondary px-3 py-1.5 text-sm outline-none focus:border-primary ${mono ? "font-mono" : ""}`} />
+    </div>
+  );
+}
+
+function InlineTextarea({ label, value, onChange, rows = 3 }: { label: string; value: string; onChange: (v: string) => void; rows?: number }) {
+  return (
+    <div>
+      <label className="mb-1 block text-[11px] text-muted-foreground">{label}</label>
+      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={rows} className="w-full rounded-lg border border-border bg-secondary px-3 py-1.5 text-sm outline-none focus:border-primary resize-none" />
+    </div>
+  );
+}
+
+function EventForm({ draft, onChange }: { draft: { title: string; background: string; trigger: string; actions: string; result: string; status: string; nextStep: string; lesson: string; refs: string }; onChange: (d: typeof draft) => void }) {
+  return (
+    <div className="space-y-2">
+      <InlineField label="标题" value={draft.title} onChange={(v) => onChange({ ...draft, title: v })} />
+      <InlineField label="背景" value={draft.background} onChange={(v) => onChange({ ...draft, background: v })} />
+      <InlineField label="起因" value={draft.trigger} onChange={(v) => onChange({ ...draft, trigger: v })} />
+      <InlineTextarea label="动作（每行一项）" value={draft.actions} onChange={(v) => onChange({ ...draft, actions: v })} rows={2} />
+      <InlineField label="结果" value={draft.result} onChange={(v) => onChange({ ...draft, result: v })} />
+      <InlineField label="当前状态" value={draft.status} onChange={(v) => onChange({ ...draft, status: v })} />
+      <InlineField label="下一步" value={draft.nextStep} onChange={(v) => onChange({ ...draft, nextStep: v })} />
+      <InlineTextarea label="结论" value={draft.lesson} onChange={(v) => onChange({ ...draft, lesson: v })} rows={2} />
+      <InlineTextarea label="证据（每行一项）" value={draft.refs} onChange={(v) => onChange({ ...draft, refs: v })} rows={2} />
+    </div>
+  );
 }
 
 function StateBlock({ label, value, empty, icon }: { label: string; value: string; empty: string; icon: ReactNode }) {
@@ -877,61 +1337,6 @@ function StateBlock({ label, value, empty, icon }: { label: string; value: strin
     <div className="rounded-xl border border-border bg-background px-4 py-4">
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">{icon}{label}</div>
       <p className={`text-sm leading-6 ${value ? "text-foreground" : "text-muted-foreground"}`}>{value || empty}</p>
-    </div>
-  );
-}
-
-function EntitySection({
-  title,
-  icon,
-  description,
-  items,
-  empty,
-  onAdd,
-}: {
-  title: string;
-  icon: ReactNode;
-  description?: string;
-  items: Array<{ id: string; title: string; description?: string; meta?: string; mono?: boolean; onEdit?: () => void; onDelete?: () => void }>;
-  empty: string;
-  onAdd?: () => void;
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-medium">
-            {icon}
-            {title}
-            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{items.length}</span>
-          </div>
-          {description && <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{description}</p>}
-        </div>
-        {onAdd && <button onClick={onAdd} className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs transition-colors hover:bg-secondary"><Plus size={11} />新增</button>}
-      </div>
-      {items.length > 0 ? (
-        <div className="space-y-2">
-          {items.map((item) => (
-            <div key={item.id} className="rounded-xl border border-border bg-background px-3 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start gap-2">
-                    <div className="min-w-0 flex-1 text-sm font-medium leading-6 break-words">{item.title}</div>
-                    {item.meta && <span className="whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{item.meta}</span>}
-                  </div>
-                  {item.description && <p className={`mt-2 whitespace-pre-line text-xs leading-6 text-muted-foreground ${item.mono ? "font-mono" : ""}`}>{item.description}</p>}
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {item.onEdit && <button onClick={(event) => { event.preventDefault(); event.stopPropagation(); item.onEdit?.(); }} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="编辑"><Pencil size={12} /></button>}
-                  {item.onDelete && <button onClick={(event) => { event.preventDefault(); event.stopPropagation(); item.onDelete?.(); }} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500" title="删除"><Trash2 size={12} /></button>}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">{empty}</p>
-      )}
     </div>
   );
 }

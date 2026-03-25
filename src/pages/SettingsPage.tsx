@@ -1,11 +1,10 @@
 ﻿import { useEffect, useState } from "react";
 import { Download, CheckCircle2, RefreshCw, Trash2 } from "lucide-react";
 import { useAppStore } from "../store";
-import { loadConfig, saveConfig, listProjects, clearAllMemory } from "../core/storage";
+import { loadConfig, saveConfig, clearAllMemory } from "../core/storage";
 import { installSkillToClaude, installSkillToCodex, isSkillInstalled, uninstallSkillFromClaude, uninstallSkillFromCodex } from "../core/installer";
 import { detectAgents } from "../core/detector";
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
-import { extractClaudeSessions, extractCodexSessions, groupByProject } from "../core/extractor";
 
 export function SettingsPage() {
   const { config, setConfig, detectedAgents, setDetectedAgents, setProjects, setSelectedProject, clearChat } = useAppStore();
@@ -13,7 +12,6 @@ export function SettingsPage() {
   const [installingSkill, setInstallingSkill] = useState<string | null>(null);
   const [uninstallingSkill, setUninstallingSkill] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [allProjectAliases, setAllProjectAliases] = useState<string[]>([]);
   const [clearingAll, setClearingAll] = useState(false);
   const [clearAllStatus, setClearAllStatus] = useState("");
 
@@ -21,7 +19,6 @@ export function SettingsPage() {
     loadConfig().then(setConfig).catch(console.error);
     detectAgents().then(setDetectedAgents).catch(console.error);
     checkSkillStatus();
-    scanDetectedProjects();
   }, []);
 
   const checkSkillStatus = async () => {
@@ -30,33 +27,7 @@ export function SettingsPage() {
     setSkillStatus({ claude, codex });
   };
 
-  const scanDetectedProjects = async () => {
-    try {
-      // Get projects from conversation logs
-      const [claudeSessions, codexSessions] = await Promise.all([
-        extractClaudeSessions().catch(() => []),
-        extractCodexSessions().catch(() => []),
-      ]);
-      const all = [...claudeSessions, ...codexSessions];
-      const grouped = groupByProject(all);
-      const aliases = new Set<string>();
-      for (const [, sessions] of grouped) {
-        const name = sessions[0].projectName;
-        const alias = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-        aliases.add(alias);
-      }
 
-      // Also include projects already in ~/.allmem/projects/
-      const existingProjects = await listProjects().catch(() => []);
-      for (const p of existingProjects) {
-        aliases.add(p.alias);
-      }
-
-      setAllProjectAliases([...aliases].sort());
-    } catch {
-      // ignore
-    }
-  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -93,14 +64,6 @@ export function SettingsPage() {
     setTimeout(() => setUninstallingSkill(null), 1000);
   };
 
-  const toggleSyncProject = (alias: string) => {
-    const current = config.syncProjects ?? [];
-    const updated = current.includes(alias)
-      ? current.filter((a) => a !== alias)
-      : [...current, alias];
-    setConfig({ ...config, syncAll: false, syncProjects: updated });
-  };
-
   const handleClearAllMemory = async () => {
     if (!(await confirmDialog("确定清空 AllMem 的全部记忆数据？会删除 user/projects/experiences/raw/logs 下的内容，但保留当前设置。"))) {
       return;
@@ -114,15 +77,12 @@ export function SettingsPage() {
       setSelectedProject(null);
       clearChat();
       setClearAllStatus("已清空全部记忆");
-      await scanDetectedProjects();
     } catch (err) {
       setClearAllStatus(`清空失败: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setClearingAll(false);
     }
   };
-
-  const isSyncAll = config.syncAll ?? true;
 
   return (
     <div className="p-6 space-y-6 overflow-y-auto h-full">
@@ -270,62 +230,6 @@ export function SettingsPage() {
             <input type="checkbox" checked={config.syncContent?.userProfile ?? true} onChange={(e) => setConfig({ ...config, syncContent: { ...config.syncContent, workspace: config.syncContent?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }, memory: config.syncContent?.memory ?? { rules: true, resources: true }, events: config.syncContent?.events ?? true, userProfile: e.target.checked } })} className="accent-primary" />
             用户画像
           </label>
-        </div>
-      </div>
-
-      {/* Project Sync Selection */}
-      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
-        <h3 className="text-sm font-medium">同步项目选择</h3>
-        <p className="text-xs text-muted-foreground">
-          勾选"全部同步"会同步所有检测到的项目；取消后可单独选择
-        </p>
-
-        <div className="space-y-1.5">
-          <label className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary">
-            <input
-              type="checkbox"
-              checked={isSyncAll}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  setConfig({ ...config, syncAll: true, syncProjects: [] });
-                } else {
-                  // Switch to manual selection, start with all selected
-                  setConfig({ ...config, syncAll: false, syncProjects: [...allProjectAliases] });
-                }
-              }}
-              className="accent-primary"
-            />
-            <span className="text-sm font-medium">全部同步</span>
-          </label>
-
-          {!isSyncAll && allProjectAliases.map((alias) => (
-            <label
-              key={alias}
-              className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary"
-            >
-              <input
-                type="checkbox"
-                checked={(config.syncProjects ?? []).includes(alias)}
-                onChange={() => toggleSyncProject(alias)}
-                className="accent-primary"
-              />
-              <span className="text-sm">{alias}</span>
-            </label>
-          ))}
-
-          {isSyncAll && allProjectAliases.length > 0 && (
-            <div className="px-3 py-1.5">
-              <p className="text-xs text-muted-foreground">
-                当前将同步所有 {allProjectAliases.length} 个项目：{allProjectAliases.join("、")}
-              </p>
-            </div>
-          )}
-
-          {allProjectAliases.length === 0 && (
-            <p className="text-xs text-muted-foreground py-2">
-              未检测到项目，请先在概览页面执行一次同步
-            </p>
-          )}
         </div>
       </div>
 

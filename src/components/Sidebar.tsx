@@ -43,7 +43,7 @@ export function Sidebar() {
           <span>GitHub</span>
         </button>
         <p className="text-[10px] text-muted-foreground/60 text-center">
-          AllMem v0.1.0
+          AllMem v0.2.0
         </p>
       </div>
     </aside>
