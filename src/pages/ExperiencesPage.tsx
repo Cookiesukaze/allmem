@@ -192,7 +192,7 @@ export function ExperiencesPage() {
           return (
             <div
               key={exp.id}
-              className={`rounded-2xl border bg-card p-4 transition-colors ${
+              className={`rounded-2xl border bg-card p-4 transition-colors shadow-sm hover:shadow-md ${
                 isSkill ? "border-amber-500/30" : "border-border hover:border-primary/20"
               }`}
             >
