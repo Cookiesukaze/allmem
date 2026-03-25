@@ -131,7 +131,7 @@ ${contextParts.length > 0 ? `=== 记忆上下文 ===\n${contextParts.join("\n\n-
         </button>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-3 flex-shrink-0 shadow-sm transition-shadow hover:shadow-md">
+      <div className="rounded-xl border border-border bg-card p-3 flex-shrink-0">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">加载项目:</span>
           {projects.map((project) => (
@@ -147,7 +147,7 @@ ${contextParts.length > 0 ? `=== 记忆上下文 ===\n${contextParts.join("\n\n-
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow hover:shadow-md">
+      <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
           {chatMessages.length === 0 && (
             <div className="space-y-4 py-12 text-center">
