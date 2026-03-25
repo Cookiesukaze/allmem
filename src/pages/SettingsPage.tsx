@@ -4,6 +4,7 @@ import { useAppStore } from "../store";
 import { loadConfig, saveConfig, listProjects, clearAllMemory } from "../core/storage";
 import { installSkillToClaude, installSkillToCodex, isSkillInstalled, uninstallSkillFromClaude, uninstallSkillFromCodex } from "../core/installer";
 import { detectAgents } from "../core/detector";
+import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { extractClaudeSessions, extractCodexSessions, groupByProject } from "../core/extractor";
 
 export function SettingsPage() {
@@ -101,7 +102,7 @@ export function SettingsPage() {
   };
 
   const handleClearAllMemory = async () => {
-    if (!confirm("确定清空 AllMem 的全部记忆数据？会删除 user/projects/experiences/raw/logs 下的内容，但保留当前设置。")) {
+    if (!(await confirmDialog("确定清空 AllMem 的全部记忆数据？会删除 user/projects/experiences/raw/logs 下的内容，但保留当前设置。"))) {
       return;
     }
 
@@ -166,21 +167,7 @@ export function SettingsPage() {
               }
               className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
             />
-            <p className="text-[10px] text-muted-foreground mt-0.5">主模型，用于因果链提取和经验蒸馏</p>
-          </div>
-
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Curator 模型 (廉价模型)</label>
-            <input
-              type="text"
-              value={config.llm.curatorModel ?? ""}
-              onChange={(e) =>
-                setConfig({ ...config, llm: { ...config.llm, curatorModel: e.target.value } })
-              }
-              placeholder="留空则与主模型相同"
-              className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
-            />
-            <p className="text-[10px] text-muted-foreground mt-0.5">用于记忆压缩和摘要，可用更便宜的模型节省 token</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">用于记忆提取和整理</p>
           </div>
         </div>
       </div>
@@ -188,45 +175,6 @@ export function SettingsPage() {
       {/* Sync Config */}
       <div className="bg-card rounded-xl border border-border p-4 space-y-4">
         <h3 className="text-sm font-medium">同步设置</h3>
-
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm">同步模式</p>
-            <p className="text-xs text-muted-foreground">手动: 需要手动触发; 自动: 定时同步</p>
-          </div>
-          <select
-            value={config.sync.mode}
-            onChange={(e) =>
-              setConfig({
-                ...config,
-                sync: { ...config.sync, mode: e.target.value as "manual" | "auto" },
-              })
-            }
-            className="px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none"
-          >
-            <option value="manual">手动</option>
-            <option value="auto">自动</option>
-          </select>
-        </div>
-
-        {config.sync.mode === "auto" && (
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">
-              同步间隔（分钟）
-            </label>
-            <input
-              type="number"
-              value={config.sync.intervalMinutes}
-              onChange={(e) =>
-                setConfig({
-                  ...config,
-                  sync: { ...config.sync, intervalMinutes: parseInt(e.target.value) || 30 },
-                })
-              }
-              className="w-32 px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
-            />
-          </div>
-        )}
 
         <div className="grid grid-cols-3 gap-3">
           <div>
@@ -282,6 +230,46 @@ export function SettingsPage() {
             />
             <p className="text-[10px] text-muted-foreground mt-0.5">近期记录攒够N条后压缩</p>
           </div>
+        </div>
+      </div>
+
+      {/* Sync Content Selection */}
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+        <div>
+          <h3 className="text-sm font-medium">同步内容配置</h3>
+          <p className="text-xs text-muted-foreground">选择同步时提取哪些内容板块，未勾选的板块将保留原有内容不被覆盖</p>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-1.5">工作台</p>
+            <div className="grid grid-cols-3 gap-1.5 pl-2">
+              {([["goal", "目标定位"], ["status", "当前状态"], ["focus", "当前焦点"], ["nextSteps", "下一步"], ["risks", "风险/阻塞"]] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-1.5 cursor-pointer text-xs">
+                  <input type="checkbox" checked={config.syncContent?.workspace?.[key] ?? true} onChange={(e) => setConfig({ ...config, syncContent: { ...config.syncContent, workspace: { ...(config.syncContent?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }), [key]: e.target.checked }, memory: config.syncContent?.memory ?? { rules: true, resources: true }, events: config.syncContent?.events ?? true } })} className="accent-primary" />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-1.5">长期记忆</p>
+            <div className="grid grid-cols-3 gap-1.5 pl-2">
+              {([["rules", "长期规则"], ["resources", "关键资料"]] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-1.5 cursor-pointer text-xs">
+                  <input type="checkbox" checked={config.syncContent?.memory?.[key] ?? true} onChange={(e) => setConfig({ ...config, syncContent: { ...config.syncContent, workspace: config.syncContent?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }, memory: { ...(config.syncContent?.memory ?? { rules: true, resources: true }), [key]: e.target.checked }, events: config.syncContent?.events ?? true } })} className="accent-primary" />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+            <input type="checkbox" checked={config.syncContent?.events ?? true} onChange={(e) => setConfig({ ...config, syncContent: { ...config.syncContent, workspace: config.syncContent?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }, memory: config.syncContent?.memory ?? { rules: true, resources: true }, events: e.target.checked, userProfile: config.syncContent?.userProfile ?? true } })} className="accent-primary" />
+            事件
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+            <input type="checkbox" checked={config.syncContent?.userProfile ?? true} onChange={(e) => setConfig({ ...config, syncContent: { ...config.syncContent, workspace: config.syncContent?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }, memory: config.syncContent?.memory ?? { rules: true, resources: true }, events: config.syncContent?.events ?? true, userProfile: e.target.checked } })} className="accent-primary" />
+            用户画像
+          </label>
         </div>
       </div>
 
@@ -341,25 +329,42 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {/* Experience Distiller */}
+      {/* Injection Config */}
       <div className="bg-card rounded-xl border border-border p-4 space-y-4">
-        <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium">记忆注入配置</h3>
+          <p className="text-xs text-muted-foreground">选择使用 /al-pull 时注入哪些项目板块</p>
+        </div>
+        <div className="space-y-3">
           <div>
-            <h3 className="text-sm font-medium">经验蒸馏</h3>
-            <p className="text-xs text-muted-foreground">
-              同步时自动从因果链中提取可复用经验（实验性功能，会额外消耗 LLM token）
-            </p>
+            <p className="text-xs font-medium text-muted-foreground mb-1.5">工作台</p>
+            <div className="grid grid-cols-3 gap-1.5 pl-2">
+              {([["goal", "目标定位"], ["status", "当前状态"], ["focus", "当前焦点"], ["nextSteps", "下一步"], ["risks", "风险/阻塞"]] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-1.5 cursor-pointer text-xs">
+                  <input type="checkbox" checked={config.injection?.workspace?.[key] ?? true} onChange={(e) => setConfig({ ...config, injection: { ...config.injection, workspace: { ...(config.injection?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }), [key]: e.target.checked }, memory: config.injection?.memory ?? { rules: true, resources: true }, events: config.injection?.events ?? true, manual: config.injection?.manual ?? true } })} className="accent-primary" />
+                  {label}
+                </label>
+              ))}
+            </div>
           </div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config.enableDistiller ?? false}
-              onChange={(e) =>
-                setConfig({ ...config, enableDistiller: e.target.checked })
-              }
-              className="accent-primary"
-            />
-            <span className="text-xs">启用</span>
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-1.5">长期记忆</p>
+            <div className="grid grid-cols-3 gap-1.5 pl-2">
+              {([["rules", "长期规则"], ["resources", "关键资料"]] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-1.5 cursor-pointer text-xs">
+                  <input type="checkbox" checked={config.injection?.memory?.[key] ?? true} onChange={(e) => setConfig({ ...config, injection: { ...config.injection, workspace: config.injection?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }, memory: { ...(config.injection?.memory ?? { rules: true, resources: true }), [key]: e.target.checked }, events: config.injection?.events ?? true, manual: config.injection?.manual ?? true } })} className="accent-primary" />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+            <input type="checkbox" checked={config.injection?.events ?? true} onChange={(e) => setConfig({ ...config, injection: { ...config.injection, workspace: config.injection?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }, memory: config.injection?.memory ?? { rules: true, resources: true }, events: e.target.checked, manual: config.injection?.manual ?? true, userProfile: config.injection?.userProfile ?? true } })} className="accent-primary" />
+            事件
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+            <input type="checkbox" checked={config.injection?.userProfile ?? true} onChange={(e) => setConfig({ ...config, injection: { ...config.injection, workspace: config.injection?.workspace ?? { goal: true, status: true, focus: true, nextSteps: true, risks: true }, memory: config.injection?.memory ?? { rules: true, resources: true }, events: config.injection?.events ?? true, manual: config.injection?.manual ?? true, userProfile: e.target.checked } })} className="accent-primary" />
+            用户画像
           </label>
         </div>
       </div>
@@ -439,7 +444,10 @@ export function SettingsPage() {
       <div className="bg-card rounded-xl border border-border p-4 space-y-4">
         <h3 className="text-sm font-medium">Skill 安装</h3>
         <p className="text-xs text-muted-foreground">
-          安装 /allmem、/allmem-sync 和 /allmem-undo skill 到你的AI工具中
+          安装 /al-pull、/al-push 和 /al-search skill 到你的AI工具中
+        </p>
+        <p className="text-xs text-muted-foreground/70">
+          注意：目前对沙箱模式的 Codex 支持较弱
         </p>
 
         <div className="space-y-2">
@@ -500,6 +508,18 @@ export function SettingsPage() {
               </div>
             ))}
         </div>
+
+        {Object.values(skillStatus).some(Boolean) && (
+          <div className="rounded-lg bg-secondary/50 p-3 space-y-2">
+            <p className="text-xs font-medium">Skill 使用方法</p>
+            <div className="space-y-1.5 text-[11px] text-muted-foreground">
+              <p><code className="rounded bg-background px-1.5 py-0.5 text-primary">/al-pull</code> — 加载项目记忆到当前对话（自动匹配当前目录）</p>
+              <p><code className="rounded bg-background px-1.5 py-0.5 text-primary">/al-push</code> — 将当前对话同步保存到 AllMem 记忆中</p>
+              <p><code className="rounded bg-background px-1.5 py-0.5 text-primary">/al-search 关键词</code> — 在当前项目记忆中搜索（加"所有项目"可跨项目搜索）</p>
+            </div>
+            <p className="text-[10px] text-muted-foreground/60">安装后需重启 Claude Code / Codex 才能识别新 skill</p>
+          </div>
+        )}
       </div>
 
       <div className="bg-card rounded-xl border border-border p-4 space-y-4">
@@ -537,5 +557,6 @@ export function SettingsPage() {
     </div>
   );
 }
+
 
 

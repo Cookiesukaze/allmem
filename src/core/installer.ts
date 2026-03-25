@@ -4,16 +4,16 @@ import { exists, mkdir, writeTextFile, remove } from "@tauri-apps/plugin-fs";
 import { join, homeDir } from "@tauri-apps/api/path";
 
 const ALLMEM_SKILL_MD = `---
-name: allmem
+name: al-pull
 description: >
   跨AI工具统一记忆管理。使用此skill可以加载你在所有AI工具(Claude/Codex/Cursor等)
   中积累的项目记忆和用户画像，让AI从第一句话就了解你和你的项目。
-  触发词: "加载记忆", "load memory", "allmem", "项目上下文", "project context",
+  触发词: "加载记忆", "load memory", "al-pull", "项目上下文", "project context",
   "你还记得吗", "之前我们讨论过"
 license: MIT
 metadata:
   author: AllMem
-  version: "0.1.0"
+  version: "0.2.0"
 allowed-tools:
   - Bash
   - Read
@@ -23,120 +23,132 @@ allowed-tools:
 
 # AllMem - 跨AI工具记忆注入
 
-当用户需要项目上下文或个人记忆时，执行以下步骤：
+当用户需要项目上下文或个人记忆时，执行以下步骤。
+
+**核心原则：原样粘贴，不要缩写、不要总结、不要省略任何内容。**
 
 ## 步骤
 
-### 1. 读取用户全局信息
+### 1. 读取注入配置
 
 \`\`\`bash
-cat ~/.allmem/user/instructions.md
-cat ~/.allmem/user/latest.md
+cat ~/.allmem/config.json
 \`\`\`
 
-### 2. 识别当前项目
+读取 \`injection\` 字段，它控制注入哪些板块：
+- \`injection.workspace\`: { goal, status, focus, nextSteps, risks } — 控制工作台的哪些子字段
+- \`injection.memory\`: { rules, resources } — 控制长期记忆的哪些子字段
+- \`injection.events\`: boolean — 是否注入事件
+- \`injection.manual\`: boolean — 是否注入用户维护内容
+- \`injection.userProfile\`: boolean — 是否注入用户画像
 
-根据当前工作目录，在 \`~/.allmem/projects/\` 下找到对应的项目目录。
-可以通过读取各项目的 \`meta.json\` 中的 \`path\` 字段来匹配。
+只注入配置为 true 的板块。
+
+### 2. 读取用户全局信息
 
 \`\`\`bash
-# 列出所有项目
+cat ~/.allmem/user/instructions.md 2>/dev/null
+\`\`\`
+如果 \`injection.userProfile\` 为 true：
+\`\`\`bash
+cat ~/.allmem/user/latest.md 2>/dev/null
+\`\`\`
+
+### 3. 识别当前项目
+
+根据当前工作目录，在 \`~/.allmem/projects/\` 下找到对应的项目目录。
+读取各项目的 \`meta.json\` 中的 \`path\` 字段来匹配。
+
+\`\`\`bash
 ls ~/.allmem/projects/
-# 读取某个项目的元信息
 cat ~/.allmem/projects/<project>/meta.json
 \`\`\`
 
-### 3. 读取项目记忆和项目使用说明
+### 4. 读取项目数据
+
+读取以下文件（按需）：
 
 \`\`\`bash
-# 项目长期记忆（AI自动整理的稳定信息）
-cat ~/.allmem/projects/<project>/latest.md
-# 项目近期动态（最近几次同步的对话摘要）
-cat ~/.allmem/projects/<project>/recent.md
-# 项目使用说明（用户自己维护的，非常重要）
-cat ~/.allmem/projects/<project>/instructions.md
+# 结构化记忆（工作台、规则、资料、事件）
+cat ~/.allmem/projects/<project>/objects.json 2>/dev/null
+# 近期动态
+cat ~/.allmem/projects/<project>/recent.md 2>/dev/null
+# 用户维护内容
+cat ~/.allmem/projects/<project>/instructions.md 2>/dev/null
 \`\`\`
 
-### 4. 注入上下文
+### 5. 组装并注入
 
-将用户画像、项目记忆、项目使用说明整合，写入当前工具的配置文件：
+将读取到的原始内容**原样**组装成以下 markdown，写入 \`CLAUDE.md\`（或 \`AGENTS.md\`）的 \`<!-- allmem-start -->\` 到 \`<!-- allmem-end -->\` 区块。
 
-- Claude Code: 写入 \`CLAUDE.md\` 的 \`<!-- allmem-start -->\` 到 \`<!-- allmem-end -->\` 区块
-- Codex CLI: 写入 \`AGENTS.md\` 的 \`<!-- allmem-start -->\` 到 \`<!-- allmem-end -->\` 区块
+**不要缩写、总结或改写任何内容，直接粘贴原文。**
 
-注入格式示例：
+组装格式：
+
 \`\`\`markdown
 <!-- allmem-start -->
 ## AllMem 记忆上下文
 
 ### 用户全局说明
-{用户instructions.md内容}
+{直接粘贴 user/instructions.md 原文}
 
-### 用户画像
-{用户latest.md内容}
+### 用户画像（仅 injection.userProfile=true 时包含）
+{直接粘贴 user/latest.md 原文}
 
-### 项目使用说明
-{项目instructions.md内容 - 用户自己维护的}
+### 项目使用说明（仅 injection.manual=true 时包含）
+{直接粘贴项目 instructions.md 原文}
 
-### 项目长期记忆
-{项目latest.md内容 - AI自动整理的稳定信息}
+### 工作台（根据 injection.workspace 各字段控制）
+从 objects.json 的 state 字段提取，格式化为：
+- **核心目标**: {state.goal}
+- **当前状态**: {state.currentStatus}
+- **当前焦点**: {state.currentFocus}
+- **下一步**: {逐条列出 state.nextSteps}
+- **风险/阻塞**: {逐条列出 state.risks}
+
+### 长期规则（仅 injection.memory.rules=true 时包含）
+从 objects.json 的 rules 数组提取，每条格式化为：
+- {rule.content}（{rule.rationale}）
+
+### 关键资料（仅 injection.memory.resources=true 时包含）
+从 objects.json 的 resources 数组提取，每条格式化为：
+- [{resource.kind}] {resource.label}: {resource.value}（{resource.note}）
+
+### 事件（仅 injection.events=true 时包含）
+从 objects.json 的 events 数组提取，每个事件格式化为：
+#### {event.title}（{event.time}）
+- 背景: {event.background}
+- 起因: {event.trigger}
+- 动作: {event.actions}
+- 结果: {event.result}
+- 结论: {event.lesson}
 
 ### 近期动态
-{项目recent.md内容 - 最近几次同步的对话摘要，可能为空}
+{直接粘贴 recent.md 原文}
 
-*最后更新: {时间}*
+*最后更新: {当前时间}*
 <!-- allmem-end -->
 \`\`\`
 
-**重要**: 保留配置文件中已有的其他内容，只更新AllMem区块。如果区块不存在则追加到文件末尾。
+**重要**:
+- 保留配置文件中已有的其他内容，只更新 AllMem 区块
+- 如果区块不存在则追加到文件末尾
+- 空的板块（文件不存在或内容为空）直接跳过，不写空标题
 
-### 5. 报告
+### 6. 报告
 
 告诉用户：
 - 加载了哪个项目的记忆
-- 记忆的最后更新时间
-- 简要概括项目当前状态
-`;
-
-const ALLMEM_UNDO_SKILL_MD = `---
-name: allmem-undo
-description: >
-  撤销AllMem的上下文注入，删除CLAUDE.md/AGENTS.md中的AllMem区块。
-  触发词: "撤销记忆", "undo allmem", "清除注入的上下文"
-license: MIT
-metadata:
-  author: AllMem
-  version: "0.1.0"
-allowed-tools:
-  - Read
-  - Edit
----
-
-# AllMem - 撤销上下文注入
-
-删除当前项目配置文件中的AllMem注入区块。
-
-## 步骤
-
-### 1. 检测配置文件
-
-检查当前目录是否有 \`CLAUDE.md\` 或 \`AGENTS.md\`。
-
-### 2. 删除AllMem区块
-
-找到 \`<!-- allmem-start -->\` 和 \`<!-- allmem-end -->\` 之间的内容（含标记本身），删除。
-
-### 3. 确认
-
-告诉用户已撤销注入。
+- 注入了哪些板块
+- 简要概括项目当前状态（一句话）
 `;
 
 const ALLMEM_SYNC_SKILL_MD = `---
-name: allmem-sync
+name: al-push
 description: >
   将当前对话或项目的内容同步保存到AllMem记忆中。
   默认保存当前对话摘要；也可以同步当前项目所有对话或全量同步。
-  触发词: "保存记忆", "记住这次对话", "同步记忆", "allmem sync",
+  触发词: "保存记忆", "记住这次对话", "同步记忆", "al-push",
   "save memory", "sync memory", "同步项目记忆", "全量同步"
 license: MIT
 metadata:
@@ -242,12 +254,11 @@ ls ~/.claude/projects/*/
 同「当前对话同步」的步骤 3-6。
 `;
 
-const ALLMEM_EXP_SKILL_MD = `---
-name: allmem-exp
+const ALLMEM_SEARCH_SKILL_MD = `---
+name: al-search
 description: >
-  加载AllMem经验库中的可复用经验。可以按关键词搜索，也可以自动匹配当前项目。
-  触发词: "加载经验", "load experience", "allmem-exp", "经验库", "experience",
-  "有没有类似的经验", "之前遇到过类似的问题吗"
+  在AllMem记忆库中查找相关记忆。默认只搜索当前项目，用户可指定搜索全部或特定项目。
+  触发词: "查找记忆", "search memory", "al-search", "之前有没有", "记得吗"
 license: MIT
 metadata:
   author: AllMem
@@ -255,84 +266,98 @@ metadata:
 allowed-tools:
   - Bash
   - Read
-  - Write
-  - Edit
+  - Grep
 ---
 
-# AllMem - 经验库加载
+# AllMem - 记忆查找
 
-当用户需要查阅或加载可复用经验时，执行以下步骤：
+根据用户查询在记忆库中查找相关内容。
 
 ## 步骤
 
-### 1. 读取经验库
+### 1. 确定查询内容
+
+- 如果用户提供了具体描述（如 "/al-search FFGO方法"），使用用户描述作为关键词
+- 如果用户没有提供描述（只说"查找记忆"），总结最近 3-5 轮对话内容，提取核心关键词
+
+### 2. 确定搜索范围
+
+- **默认**：只搜索当前项目（根据当前工作目录匹配 \`~/.allmem/projects/\` 下的项目）
+- 如果用户明确说"所有项目"、"全部搜索"、"跨项目"等，则搜索所有项目
+- 如果用户指定了项目名（如"在 aipro 里搜索"），则只搜索指定项目
 
 \`\`\`bash
-cat ~/.allmem/experiences/latest.json
+# 列出所有项目，读取 meta.json 匹配当前目录
+ls ~/.allmem/projects/
+cat ~/.allmem/projects/<project>/meta.json
 \`\`\`
 
-### 2. 匹配经验
+### 3. 搜索项目的结构化记忆
 
-**有参数时**（用户指定了关键词/标签）：
-- 在经验的 title、content、tags 中搜索匹配项
-- 按 confidence 降序排列
-- 返回前 10 条匹配结果
+对目标项目，读取 objects.json（结构化记忆）和 instructions.md（用户维护）：
 
-**无参数时**：
-- 读取当前工作目录，匹配 \`~/.allmem/projects/\` 下的项目
-- 优先返回 sources 中包含当前项目的经验
-- 其次返回 scope=global 的高 confidence 经验
-- 返回前 10 条
+\`\`\`bash
+# 读取结构化记忆
+cat ~/.allmem/projects/<project>/objects.json 2>/dev/null
+# 读取用户维护
+cat ~/.allmem/projects/<project>/instructions.md 2>/dev/null
+# 读取近期动态
+cat ~/.allmem/projects/<project>/recent.md 2>/dev/null
+\`\`\`
 
-### 3. 注入到上下文
+在以下字段中搜索匹配：
+- **state**（工作台）：goal、currentStatus、currentFocus、nextSteps、risks
+- **rules**（长期规则）：content、rationale
+- **resources**（关键资料）：label、value、note
+- **events**（事件）：title、trigger、actions、result、lesson
+- **instructions**（用户维护）：全文
 
-将匹配的经验写入 CLAUDE.md（或 AGENTS.md）的标记区块：
+### 4. 整理结果
+
+按相关性排序，展示最相关的 3-5 条，格式：
 
 \`\`\`markdown
-<!-- allmem-exp-start -->
-## AllMem 经验库
+## 查找结果（项目: <project-name>）
 
-{每条经验格式如下}
-
-### [标题] (confidence: N)
-[内容描述]
-> 背景: [context]
-> 标签: tag1, tag2 | 来源: project1(3次), project2(1次)
-
----
-
-*已加载 N 条经验 | {时间}*
-<!-- allmem-exp-end -->
+**[类别]** 内容摘要
+- 详细内容...
 \`\`\`
 
-**重要**: 保留配置文件中已有的其他内容，只更新 AllMem 经验区块。如果区块不存在则追加到文件末尾。
+如果是跨项目搜索，按项目分组展示。
 
-### 4. 报告
+### 5. 报告
 
 告诉用户：
-- 加载了多少条经验
-- 列出前 3 条最相关的经验标题
-- 如果有搜索词，说明匹配了什么
+- 在哪个项目中搜索的（或搜索了多少个项目）
+- 找到了多少条相关记忆
+- 展示最相关的内容，标注所属类别（工作台/规则/资料/事件/用户维护）
 `;
 
 export async function installSkillToClaude(): Promise<boolean> {
   const home = await homeDir();
-  const skillDir = await join(home, ".claude", "skills", "allmem");
-  const undoSkillDir = await join(home, ".claude", "skills", "allmem-undo");
-  const syncSkillDir = await join(home, ".claude", "skills", "allmem-sync");
-  const expSkillDir = await join(home, ".claude", "skills", "allmem-exp");
+  const skillDir = await join(home, ".claude", "skills", "al-pull");
+  const syncSkillDir = await join(home, ".claude", "skills", "al-push");
+  const searchSkillDir = await join(home, ".claude", "skills", "al-search");
 
   try {
-    for (const dir of [skillDir, undoSkillDir, syncSkillDir, expSkillDir]) {
+    for (const dir of [skillDir, syncSkillDir, searchSkillDir]) {
       if (!(await exists(dir))) {
         await mkdir(dir, { recursive: true });
       }
     }
 
     await writeTextFile(await join(skillDir, "SKILL.md"), ALLMEM_SKILL_MD);
-    await writeTextFile(await join(undoSkillDir, "SKILL.md"), ALLMEM_UNDO_SKILL_MD);
     await writeTextFile(await join(syncSkillDir, "SKILL.md"), ALLMEM_SYNC_SKILL_MD);
-    await writeTextFile(await join(expSkillDir, "SKILL.md"), ALLMEM_EXP_SKILL_MD);
+    await writeTextFile(await join(searchSkillDir, "SKILL.md"), ALLMEM_SEARCH_SKILL_MD);
+
+    // 清理旧的 skill 目录
+    const legacyDirs = ["allmem", "allmem-undo", "allmem-sync", "allmem-exp", "al-undo"];
+    for (const name of legacyDirs) {
+      const dir = await join(home, ".claude", "skills", name);
+      if (await exists(dir)) {
+        await remove(dir, { recursive: true });
+      }
+    }
 
     return true;
   } catch (err) {
@@ -343,49 +368,113 @@ export async function installSkillToClaude(): Promise<boolean> {
 
 export async function installSkillToCodex(): Promise<boolean> {
   const home = await homeDir();
-  // Codex CLI uses ~/.codex/instructions.md as global instructions
-  // We install our skill instructions there
-  const codexDir = await join(home, ".codex");
+  const skillDir = await join(home, ".codex", "skills", "al-pull");
+  const syncSkillDir = await join(home, ".codex", "skills", "al-push");
+  const searchSkillDir = await join(home, ".codex", "skills", "al-search");
 
   try {
-    if (!(await exists(codexDir))) {
-      await mkdir(codexDir, { recursive: true });
+    for (const dir of [skillDir, syncSkillDir, searchSkillDir]) {
+      if (!(await exists(dir))) {
+        await mkdir(dir, { recursive: true });
+      }
     }
 
-    const instructionsPath = await join(codexDir, "instructions.md");
-    const skillContent = `
-# AllMem 记忆管理
+    const pullSkillMd = `---
+name: al-pull
+description: >
+  Load AllMem memory context for current project.
+  IMPORTANT: Before executing, request sandbox permission to read ~/.codex/skills/ and ~/.allmem/ directories.
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+---
 
-## 加载记忆
-当用户说"加载记忆"、"allmem"、"项目上下文"时：
-1. 读取 ~/.allmem/user/instructions.md（用户全局说明）和 ~/.allmem/user/latest.md（用户画像）
-2. 根据当前工作目录匹配 ~/.allmem/projects/ 下的项目（读取各项目 meta.json 的 path 字段）
-3. 读取匹配项目的 latest.md（长期记忆）、recent.md（近期动态）和 instructions.md（项目使用说明）
-4. 将这些信息写入当前目录的 AGENTS.md 的 <!-- allmem-start --> 到 <!-- allmem-end --> 区块
-5. 报告加载了什么
+# AllMem Memory Loading
 
-## 保存记忆
-当用户说"保存记忆"、"记住这次对话"、"同步记忆"时：
-1. 根据当前工作目录匹配 ~/.allmem/projects/ 下的项目
-2. 总结当前对话为 3-5 条要点
-3. 追加到项目的 recent.md
-4. 读取 ~/.allmem/config.json 的 privacy 配置，过滤敏感词
-5. 报告保存了什么
+When user says "al-pull", "load memory", or "project context":
 
-## 撤销记忆
-当用户说"撤销记忆"、"undo allmem"时，删除 AGENTS.md 中的 <!-- allmem-start/end --> 区块。
+1. Read ~/.allmem/config.json for injection settings
+2. Read ~/.allmem/user/instructions.md and latest.md
+3. List ~/.allmem/projects/, read each meta.json to match current directory
+4. Read matched project's objects.json, recent.md, instructions.md
+5. Write to AGENTS.md between <!-- allmem-start --> and <!-- allmem-end -->
+
+Format:
+\`\`\`
+<!-- allmem-start -->
+## AllMem Memory Context
+
+### User Instructions
+{paste user/instructions.md}
+
+### User Profile
+{paste user/latest.md}
+
+### Workspace
+- **Next Steps**: {list objects.json > state.nextSteps}
+- **Risks**: {list objects.json > state.risks}
+
+### Rules
+{list rules with rationale}
+
+### Resources
+{list resources}
+
+### Events
+{list events with details}
+
+### Recent Activity
+{paste recent.md}
+
+*Updated: {timestamp}*
+<!-- allmem-end -->
+\`\`\`
+
+Report: which project loaded, what sections injected.
 `;
 
-    // Append to existing instructions if present, or create new
-    try {
-      const { readTextFile } = await import("@tauri-apps/plugin-fs");
-      const existing = await readTextFile(instructionsPath);
-      if (!existing.includes("AllMem 记忆加载")) {
-        await writeTextFile(instructionsPath, existing + "\n" + skillContent);
-      }
-    } catch {
-      await writeTextFile(instructionsPath, skillContent);
-    }
+    const pushSkillMd = `---
+name: al-push
+description: Save current conversation to AllMem memory
+allowed-tools:
+  - Read
+  - Edit
+  - Bash
+---
+
+# AllMem Memory Saving
+
+When user says "al-push", "save memory", or "remember this":
+
+1. Match current directory to ~/.allmem/projects/<project>/
+2. Summarize current conversation as 3-5 bullet points
+3. Append to project's recent.md: \`### {datetime} (codex)\\n- point1\\n- point2\`
+4. Read ~/.allmem/config.json privacy settings and filter sensitive words
+5. Report: saved to which project, how many entries accumulated
+`;
+
+    const searchSkillMd = `---
+name: al-search
+description: Search AllMem memory for relevant information
+allowed-tools:
+  - Read
+  - Bash
+---
+
+# AllMem Memory Search
+
+When user says "al-search", "find memory", or "do you remember":
+
+1. Default: search current project's objects.json + instructions.md + recent.md only
+2. If user says "all projects" or specifies project name, search across projects
+3. Show top 3-5 most relevant results with category labels
+`;
+
+    await writeTextFile(await join(skillDir, "SKILL.md"), pullSkillMd);
+    await writeTextFile(await join(syncSkillDir, "SKILL.md"), pushSkillMd);
+    await writeTextFile(await join(searchSkillDir, "SKILL.md"), searchSkillMd);
 
     return true;
   } catch (err) {
@@ -397,16 +486,10 @@ export async function installSkillToCodex(): Promise<boolean> {
 export async function isSkillInstalled(tool: "claude" | "codex"): Promise<boolean> {
   const home = await homeDir();
   if (tool === "claude") {
-    return exists(await join(home, ".claude", "skills", "allmem", "SKILL.md"));
+    return exists(await join(home, ".claude", "skills", "al-pull", "SKILL.md"));
   }
   if (tool === "codex") {
-    try {
-      const { readTextFile } = await import("@tauri-apps/plugin-fs");
-      const content = await readTextFile(await join(home, ".codex", "instructions.md"));
-      return content.includes("AllMem 记忆管理");
-    } catch {
-      return false;
-    }
+    return exists(await join(home, ".codex", "skills", "al-pull", "SKILL.md"));
   }
   return false;
 }
@@ -414,10 +497,15 @@ export async function isSkillInstalled(tool: "claude" | "codex"): Promise<boolea
 export async function uninstallSkillFromClaude(): Promise<boolean> {
   const home = await homeDir();
   const skillDirs = [
+    await join(home, ".claude", "skills", "al-pull"),
+    await join(home, ".claude", "skills", "al-push"),
+    await join(home, ".claude", "skills", "al-search"),
+    // 旧名称也清理
     await join(home, ".claude", "skills", "allmem"),
     await join(home, ".claude", "skills", "allmem-undo"),
     await join(home, ".claude", "skills", "allmem-sync"),
     await join(home, ".claude", "skills", "allmem-exp"),
+    await join(home, ".claude", "skills", "al-undo"),
   ];
 
   try {
@@ -435,17 +523,17 @@ export async function uninstallSkillFromClaude(): Promise<boolean> {
 
 export async function uninstallSkillFromCodex(): Promise<boolean> {
   const home = await homeDir();
-  const instructionsPath = await join(home, ".codex", "instructions.md");
+  const skillDirs = [
+    await join(home, ".codex", "skills", "al-pull"),
+    await join(home, ".codex", "skills", "al-push"),
+    await join(home, ".codex", "skills", "al-search"),
+  ];
 
   try {
-    const { readTextFile } = await import("@tauri-apps/plugin-fs");
-    const content = await readTextFile(instructionsPath);
-    // Remove the AllMem section
-    const cleaned = content.replace(/\n?# AllMem 记忆管理[\s\S]*?(?=\n# (?!AllMem)|$)/, "").trim();
-    if (cleaned) {
-      await writeTextFile(instructionsPath, cleaned);
-    } else {
-      await remove(instructionsPath);
+    for (const dir of skillDirs) {
+      if (await exists(dir)) {
+        await remove(dir, { recursive: true });
+      }
     }
     return true;
   } catch (err) {
