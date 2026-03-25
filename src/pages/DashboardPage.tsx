@@ -3,7 +3,7 @@ import { RefreshCw, FolderOpen, Clock, CheckCircle2, AlertCircle } from "lucide-
 import { useAppStore } from "../store";
 import { showToast } from "../components/Toast";
 import { runSync } from "../core/sync";
-import { listProjects, loadConfig, loadExperiences, saveSyncHistory } from "../core/storage";
+import { listProjects, loadConfig, loadExperiences, saveSyncHistory, saveConfig } from "../core/storage";
 import { detectAgents } from "../core/detector";
 
 export function DashboardPage() {
@@ -16,6 +16,7 @@ export function DashboardPage() {
     setLastSyncResults,
     detectedAgents,
     setDetectedAgents,
+    config,
     setConfig,
   } = useAppStore();
   const [, setExpCount] = useState(0);
@@ -44,6 +45,22 @@ export function DashboardPage() {
 
     loadInitialData().catch(console.error);
   }, []);
+
+  const allProjectAliases = Array.from(
+    new Set([...projects.map((p) => p.alias), ...(config.syncProjects ?? [])])
+  ).sort();
+
+  const isSyncAll = config.syncAll ?? true;
+
+  const toggleSyncProject = async (alias: string) => {
+    const current = config.syncProjects ?? [];
+    const updated = current.includes(alias)
+      ? current.filter((a) => a !== alias)
+      : [...current, alias];
+    const newConfig = { ...config, syncAll: false, syncProjects: updated };
+    setConfig(newConfig);
+    await saveConfig(newConfig);
+  };
 
   const handleSync = async () => {
     setIsSyncing(true);
@@ -172,6 +189,55 @@ export function DashboardPage() {
             ))}
             {detectedAgents.length === 0 && (
               <p className="text-sm text-muted-foreground">加载中...</p>
+            )}
+          </div>
+        </div>
+
+        {/* Sync Project Selection */}
+        <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+          <h3 className="text-sm font-medium">同步项目选择</h3>
+          <p className="text-xs text-muted-foreground">
+            勾选"全部同步"会同步所有检测到的项目；取消后可单独选择
+          </p>
+
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary">
+              <input
+                type="checkbox"
+                checked={isSyncAll}
+                onChange={async (e) => {
+                  const newConfig = e.target.checked
+                    ? { ...config, syncAll: true, syncProjects: [] }
+                    : { ...config, syncAll: false, syncProjects: [...allProjectAliases] };
+                  setConfig(newConfig);
+                  await saveConfig(newConfig);
+                }}
+                className="accent-primary"
+              />
+              <span className="text-sm font-medium">全部同步</span>
+            </label>
+
+            {!isSyncAll && allProjectAliases.map((alias) => (
+              <label
+                key={alias}
+                className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary"
+              >
+                <input
+                  type="checkbox"
+                  checked={(config.syncProjects ?? []).includes(alias)}
+                  onChange={() => toggleSyncProject(alias)}
+                  className="accent-primary"
+                />
+                <span className="text-sm">{alias}</span>
+              </label>
+            ))}
+
+            {isSyncAll && allProjectAliases.length > 0 && (
+              <div className="px-3 py-1.5">
+                <p className="text-xs text-muted-foreground">
+                  当前将同步所有 {allProjectAliases.length} 个项目
+                </p>
+              </div>
             )}
           </div>
         </div>
