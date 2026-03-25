@@ -48,11 +48,12 @@ LLM 使用 OpenAI 兼容接口（可自行配置 API Key 和模型）
 - 完善从其它源（在线链接、本地文件）导入记忆
 - 支持更多 AI 工具数据源（Cursor、小龙虾 等）
 - 更省Token、更清晰、更多种记忆存储管理方式
-
-## 社区
-欢迎加入 [Linux.do](https://linux.do) 社区讨论
 - 上层应用
 
 ## License
 
 [MIT](./LICENSE)
+
+## 社区
+
+欢迎加入 [Linux.do](https://linux.do) 社区讨论
