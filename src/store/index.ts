@@ -35,8 +35,10 @@ interface AppState {
   // Project-level sync state
   projectSyncing: boolean;
   projectSyncStatus: string;
+  projectSyncProgress: { stage: string; detail: string; progress: number } | null;
   setProjectSyncing: (syncing: boolean) => void;
   setProjectSyncStatus: (status: string) => void;
+  setProjectSyncProgress: (progress: AppState["projectSyncProgress"]) => void;
 
   // Agents
   detectedAgents: { id: string; name: string; detected: boolean }[];
@@ -72,8 +74,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   projectSyncing: false,
   projectSyncStatus: "",
+  projectSyncProgress: null,
   setProjectSyncing: (syncing) => set({ projectSyncing: syncing }),
   setProjectSyncStatus: (status) => set({ projectSyncStatus: status }),
+  setProjectSyncProgress: (progress) => set({ projectSyncProgress: progress }),
 
   detectedAgents: [],
   setDetectedAgents: (agents) => set({ detectedAgents: agents }),
