@@ -56,4 +56,4 @@ LLM 使用 OpenAI 兼容接口（可自行配置 API Key 和模型）
 
 ## 社区
 
-欢迎加入 [Linux.do](https://linux.do) 社区讨论
+欢迎加入 [Linux.do](https://linux.do/t/topic/1814756) 社区讨论
