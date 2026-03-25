@@ -10,6 +10,7 @@ import {
   Save,
   Undo2,
 } from "lucide-react";
+import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { loadExperiences, saveExperiences } from "../core/storage";
 import type { Experience } from "../core/types";
 
@@ -35,6 +36,7 @@ export function ExperiencesPage() {
     verification: "",
     whyItWorks: "",
   });
+  const confirmDanger = (message: string) => confirmDialog(message);
 
   useEffect(() => {
     loadExperiences().then(setExperiences).catch(console.error);
@@ -369,8 +371,8 @@ export function ExperiencesPage() {
                         </button>
                       )}
                       <button
-                        onClick={() => {
-                          if (confirm(`确定删除 \"${exp.title}\"？`)) {
+                        onClick={async () => {
+                          if (await confirmDanger(`确定删除 "${exp.title}"？`)) {
                             handleDelete(exp.id).catch(console.error);
                           }
                         }}
@@ -417,5 +419,6 @@ function splitContentToSteps(content: string): string[] {
     .filter(Boolean)
     .slice(0, 5);
 }
+
 
 

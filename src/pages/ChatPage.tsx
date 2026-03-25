@@ -211,7 +211,7 @@ function formatProjectObjects(alias: string, objects: ProjectObjects): string {
 
   const rules = objects.rules.slice(0, 8).map((rule) => `- ${rule.content}${rule.rationale ? `｜说明：${rule.rationale}` : ""}`).join("\n");
   const resources = objects.resources.slice(0, 10).map((resource) => `- [${resource.kind}] ${resource.label}: ${resource.value}${resource.note ? `｜说明：${resource.note}` : ""}`).join("\n");
-  const events = objects.events.slice(0, 6).map((event) => `- ${event.title}｜触发：${event.trigger || "无"}｜结果：${event.result || "无"}${event.lesson ? `｜结论：${event.lesson}` : ""}`).join("\n");
+  const events = objects.events.slice(0, 6).map((event) => `- ${event.time ? `[${event.time}] ` : ""}${event.title}｜背景：${event.background || "无"}｜触发：${event.trigger || "无"}｜结果：${event.result || "无"}${event.status ? `｜状态：${event.status}` : ""}${event.nextStep ? `｜下一步：${event.nextStep}` : ""}${event.lesson ? `｜结论：${event.lesson}` : ""}`).join("\n");
 
   return [
     `### ${alias} state`,
@@ -224,3 +224,5 @@ function formatProjectObjects(alias: string, objects: ProjectObjects): string {
     events || "- 无",
   ].join("\n");
 }
+
+
