@@ -7,14 +7,10 @@ import {
   extractUserInfo,
   generateVersionSummary,
   generateProjectDescription,
-  narrateCausalChains,
-  distillExperiences,
-  mergeExperiences,
   extractProjectObjects,
 } from "./llm";
 import { redactSensitive } from "./privacy";
 import { getLLMConfigForRole } from "./types";
-import type { Experience } from "./types";
 import {
   loadConfig,
   saveConfig,
@@ -30,9 +26,9 @@ import {
   countRecentEntries,
   appendSyncLog,
   initStorage,
-  loadExperiences,
-  saveExperiences,
+  loadProjectObjects,
   saveProjectObjects,
+  saveProjectVersion,
 } from "./storage";
 import type { ProjectMeta, SyncResult } from "./types";
 
@@ -154,112 +150,209 @@ export async function runSync(
   let processedProjects = 0;
   const userConversations: string[] = [];
   const projectFns: (() => Promise<void>)[] = [];
-  const allDistilledResults: Array<{
-    alias: string;
-    distilled: { newExperiences: Omit<Experience, "id" | "created" | "updated" | "confidence" | "sources">[]; reinforced: string[] };
-  }> = [];
 
   for (const [projectPath, sessions] of filteredGroups) {
     const projectName = sessions[0].projectName;
 
     const processProject = async () => {
       try {
-        const allTurns = sessions.sort((a, b) => a.lastModified - b.lastModified).flatMap((s) => s.turns);
-
-        const conversationText = redactSensitive(
-          turnsToText(allTurns, config.sync.maxTurns ?? 80, config.sync.maxCharsPerTurn ?? 800),
-          config
-        );
-
-        userConversations.push(conversationText);
-
         const alias = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-        const existingMemory = await loadProjectMemory(alias);
-        const isUpdate = !!existingMemory;
-
-        onProgress?.({
-          stage: "叙事",
-          detail: `提取 ${projectName} 的因果链... (${processedProjects + 1}/${totalProjects})`,
-          progress: 30 + (processedProjects / totalProjects) * 50,
-        });
-
-        const goodConfig = getLLMConfigForRole(config.llm, "narrator");
-        const causalNarrative = await narrateCausalChains(conversationText, projectName, goodConfig);
-        const hasCausalChains = causalNarrative.trim() !== "无因果链";
-
-        onProgress?.({
-          stage: isUpdate ? "更新" : "整理",
-          detail: `${isUpdate ? "更新" : "整理"} ${projectName} 的记忆... (${processedProjects + 1}/${totalProjects})`,
-          progress: 30 + (processedProjects / totalProjects) * 50 + 3,
-        });
-
+        const sortedSessions = [...sessions].sort((a, b) => a.lastModified - b.lastModified);
         const cheapConfig = getLLMConfigForRole(config.llm, "curator");
-        const sessionSource = sessions[0]?.sessionId?.includes("codex") ? "codex" : "claude";
+        const compactionThreshold = config.sync.compactionThreshold ?? 10;
+        const existingMeta = await loadProjectMeta(alias);
+        let latestMemory = await loadProjectMemory(alias);
+        const projectSpan = totalProjects > 0 ? 50 / totalProjects : 0;
+        const projectBase = 30 + processedProjects * projectSpan;
+        const sessionDenominator = Math.max(sortedSessions.length, 1);
+        const projectConversationSamples: string[] = [];
+        const objectRefreshStride = 3;
+        const pendingObjectEvidence: string[] = [];
+        let dirtyObjectUpdates = 0;
 
-        const curatorTask = async () => {
-          const inputText = hasCausalChains ? causalNarrative : conversationText;
-          const summary = await summarizeSingleConversation(inputText, projectName, cheapConfig);
-          await appendProjectRecent(alias, summary, sessionSource);
+        if (!existingMeta) {
+          const initialMeta: ProjectMeta = {
+            alias,
+            path: projectPath,
+            description: "",
+            notes: "",
+            created: new Date().toISOString(),
+            lastSync: null,
+            currentVersion: latestMemory ? 1 : 0,
+            status: "active",
+          };
+          await saveProjectMeta(alias, initialMeta);
+          onProgress?.({
+            stage: "登记项目",
+            detail: `${projectName}：已创建项目条目，开始填充内容...`,
+            progress: projectBase + 0.2,
+            completedProject: alias,
+          });
+        }
 
-          const compactionThreshold = config.sync.compactionThreshold ?? 10;
+        // 报告开始处理会话
+        if (sortedSessions.length === 0) {
+          onProgress?.({
+            stage: "检查",
+            detail: `${projectName}：无新会话，跳过处理`,
+            progress: projectBase + projectSpan * 0.5,
+            completedProject: alias,
+          });
+        }
+
+        for (let sessionIndex = 0; sessionIndex < sortedSessions.length; sessionIndex++) {
+          const session = sortedSessions[sessionIndex];
+          const progressBase = projectBase + (sessionIndex / sessionDenominator) * Math.max(projectSpan - 2, 0);
+          const sessionText = redactSensitive(
+            turnsToText(session.turns, config.sync.maxTurns ?? 80, config.sync.maxCharsPerTurn ?? 800),
+            config
+          );
+
+          if (!sessionText.trim()) {
+            continue;
+          }
+
+          projectConversationSamples.push(sessionText);
+          userConversations.push(sessionText);
+
+          onProgress?.({
+            stage: "整理",
+            detail: `${projectName}：分析第 ${sessionIndex + 1}/${sortedSessions.length} 段对话...`,
+            progress: progressBase,
+          });
+
+          const summary = await summarizeSingleConversation(sessionText, projectName, cheapConfig);
+          await appendProjectRecent(alias, summary, inferSessionSource(session.sessionId), session.lastModified);
+
+          onProgress?.({
+            stage: "写入",
+            detail: `${projectName}：已写入第 ${sessionIndex + 1}/${sortedSessions.length} 段推进记录`,
+            progress: progressBase + 0.8,
+            completedProject: alias,
+          });
+
           const recentCount = await countRecentEntries(alias);
+          const needsCompaction = recentCount >= compactionThreshold || !latestMemory;
 
-          if (recentCount >= compactionThreshold || !existingMemory) {
+          pendingObjectEvidence.push(
+            [
+              summary,
+              sessionText.slice(0, 2500),
+            ].filter(Boolean).join("\n\n---\n\n")
+          );
+          dirtyObjectUpdates += 1;
+
+          const shouldRefreshObjects =
+            dirtyObjectUpdates >= objectRefreshStride ||
+            recentCount >= compactionThreshold ||
+            sessionIndex === sortedSessions.length - 1 ||
+            !latestMemory;
+
+          console.log(`[sync] Session ${sessionIndex + 1}/${sortedSessions.length}, dirtyObjectUpdates: ${dirtyObjectUpdates}, recentCount: ${recentCount}, needsCompaction: ${needsCompaction}, shouldRefreshObjects: ${shouldRefreshObjects}`);
+
+          // 并行执行 compact 和 extractObjects
+          const parallelTasks: Promise<void>[] = [];
+
+          let compactedMemory: string | null = null;
+          if (needsCompaction) {
             onProgress?.({
               stage: "压缩",
-              detail: `压缩 ${projectName} 的记忆 (${recentCount} 条近期记录)...`,
-              progress: 30 + (processedProjects / totalProjects) * 50 + 5,
+              detail: `${projectName}：压缩长期记忆（当前 ${recentCount} 条近期记录）...`,
+              progress: progressBase + 2.2,
             });
 
             const recentContent = await loadProjectRecent(alias);
-            const newMemory = await compactMemory(existingMemory, recentContent ?? summary, projectName, cheapConfig);
-            const versionSummary = await generateVersionSummary(existingMemory, newMemory, cheapConfig);
-            await saveProjectMemory(alias, newMemory, versionSummary);
-            await clearProjectRecent(alias);
+            parallelTasks.push(
+              (async () => {
+                const newMemory = await compactMemory(latestMemory, recentContent ?? summary, projectName, cheapConfig);
+                const versionSummary = await generateVersionSummary(latestMemory, newMemory, cheapConfig);
+                await saveProjectMemory(alias, newMemory, versionSummary);
+                await clearProjectRecent(alias);
+                compactedMemory = newMemory;
+              })()
+            );
           }
-        };
 
-        const distillerTask = async () => {
-          if (!hasCausalChains || !config.enableDistiller) return;
-          const distillerConfig = getLLMConfigForRole(config.llm, "distiller");
-          const existingExps = await loadExperiences();
-          const distilled = await distillExperiences(causalNarrative, alias, existingExps, distillerConfig);
+          if (shouldRefreshObjects) {
+            const currentRecent = await loadProjectRecent(alias);
+            const evidence = pendingObjectEvidence.join("\n\n=====\n\n");
+            const existingObjects = await loadProjectObjects(alias);
 
-          if (distilled.newExperiences.length > 0 || distilled.reinforced.length > 0) {
-            allDistilledResults.push({ alias, distilled });
+            parallelTasks.push(
+              (async () => {
+                console.log(`[sync] Starting object extraction for ${projectName}`);
+                const extracted = await extractProjectObjects(
+                  projectName,
+                  latestMemory,
+                  currentRecent,
+                  evidence,
+                  cheapConfig,
+                  existingObjects
+                );
+                // 根据 syncContent 配置，未勾选的板块保留原有数据
+                const sc = config.syncContent;
+                const merged = {
+                  state: {
+                    goal: sc.workspace.goal ? extracted.state.goal : (existingObjects?.state?.goal ?? ""),
+                    currentStatus: sc.workspace.status ? extracted.state.currentStatus : (existingObjects?.state?.currentStatus ?? ""),
+                    currentFocus: sc.workspace.focus ? extracted.state.currentFocus : (existingObjects?.state?.currentFocus ?? ""),
+                    nextSteps: sc.workspace.nextSteps ? extracted.state.nextSteps : (existingObjects?.state?.nextSteps ?? []),
+                    risks: sc.workspace.risks ? extracted.state.risks : (existingObjects?.state?.risks ?? []),
+                  },
+                  rules: sc.memory.rules ? extracted.rules : (existingObjects?.rules ?? []),
+                  resources: sc.memory.resources ? extracted.resources : (existingObjects?.resources ?? []),
+                  events: sc.events ? extracted.events : (existingObjects?.events ?? []),
+                  updatedAt: extracted.updatedAt,
+                };
+                console.log(`[sync] Merged objects with syncContent filter`);
+                await saveProjectObjects(alias, merged);
+                console.log(`[sync] Saved objects successfully`);
+              })()
+            );
           }
-        };
 
-        await Promise.all([curatorTask(), distillerTask()]);
+          // 等待所有并行任务完成
+          if (parallelTasks.length > 0) {
+            const results = await Promise.allSettled(parallelTasks);
+            for (const result of results) {
+              if (result.status === "rejected") {
+                console.error(`[sync] Parallel task failed:`, result.reason);
+              }
+            }
+          }
 
-        onProgress?.({
-          stage: "结构化",
-          detail: `整理 ${projectName} 的结构化对象...`,
-          progress: 30 + (processedProjects / totalProjects) * 50 + 8,
-        });
+          if (compactedMemory) {
+            latestMemory = compactedMemory;
+            onProgress?.({
+              stage: "压缩",
+              detail: `${projectName}：长期记忆已更新`,
+              progress: progressBase + 2.8,
+              completedProject: alias,
+            });
+          }
 
-        const currentMemory = await loadProjectMemory(alias);
-        const currentRecent = await loadProjectRecent(alias);
-        const objectsSource = hasCausalChains ? causalNarrative : conversationText;
-        const objects = await extractProjectObjects(
-          projectName,
-          currentMemory,
-          currentRecent,
-          objectsSource,
-          cheapConfig
-        );
-        await saveProjectObjects(alias, objects);
+          if (shouldRefreshObjects) {
+            pendingObjectEvidence.length = 0;
+            dirtyObjectUpdates = 0;
+            onProgress?.({
+              stage: "结构化",
+              detail: `${projectName}：已更新状态对象 (${sessionIndex + 1}/${sortedSessions.length})`,
+              progress: progressBase + 3.4,
+              completedProject: alias,
+            });
+          }
+        }
 
-        const existingMeta = await loadProjectMeta(alias);
         let description = existingMeta?.description ?? "";
-        if (!description) {
+        if (!description && projectConversationSamples.length > 0) {
           try {
-            description = await generateProjectDescription(conversationText, projectName, config.llm);
+            description = await generateProjectDescription(projectConversationSamples.join("\n\n---\n\n"), projectName, config.llm);
           } catch {
             description = "";
           }
         }
 
+        const latestMemoryAfterSync = await loadProjectMemory(alias);
         const meta: ProjectMeta = {
           alias,
           path: projectPath,
@@ -267,16 +360,21 @@ export async function runSync(
           notes: existingMeta?.notes ?? "",
           created: existingMeta?.created ?? new Date().toISOString(),
           lastSync: new Date().toISOString(),
-          currentVersion: existingMeta?.currentVersion ?? (existingMemory ? 1 : 0),
+          currentVersion: existingMeta?.currentVersion ?? 0,
           status: "active",
         };
         await saveProjectMeta(alias, meta);
+
+        // 保存版本快照
+        if (latestMemoryAfterSync) {
+          await saveProjectVersion(alias, `同步于 ${new Date().toLocaleString()}`);
+        }
 
         processedProjects++;
         onProgress?.({
           stage: "完成项目",
           detail: `${projectName} 同步完成 (${processedProjects}/${totalProjects})`,
-          progress: 30 + (processedProjects / totalProjects) * 50,
+          progress: 30 + (processedProjects / Math.max(totalProjects, 1)) * 50,
           completedProject: alias,
         });
       } catch (err) {
@@ -296,16 +394,7 @@ export async function runSync(
 
   await runWithConcurrency(projectFns, 3);
 
-  if (allDistilledResults.length > 0) {
-    onProgress?.({ stage: "蒸馏", detail: `合并 ${allDistilledResults.length} 个项目的经验...`, progress: 82 });
-    let experiences = await loadExperiences();
-    for (const { alias, distilled } of allDistilledResults) {
-      experiences = mergeExperiences(experiences, distilled, alias);
-    }
-    await saveExperiences(experiences, `同步蒸馏${allDistilledResults.length}项`);
-  }
-
-  if (!targetProjects && userConversations.length > 0) {
+  if (!targetProjects && userConversations.length > 0 && config.syncContent.userProfile) {
     onProgress?.({ stage: "用户画像", detail: "更新用户画像...", progress: 85 });
     try {
       const existingProfile = await loadUserMemory();
@@ -356,3 +445,12 @@ async function runWithConcurrency(fns: (() => Promise<void>)[], limit: number): 
   }
   await Promise.all(executing);
 }
+
+function inferSessionSource(sessionId: string): string {
+  const normalized = sessionId.toLowerCase();
+  if (normalized.includes("codex")) return "codex";
+  if (normalized.includes("claude")) return "claude";
+  return "ai";
+}
+
+

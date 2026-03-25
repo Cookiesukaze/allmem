@@ -5,7 +5,6 @@ export interface AllMemConfig {
     apiKey: string;
     baseUrl: string;
     model: string;
-    curatorModel?: string;
   };
   sync: {
     mode: "manual" | "auto";
@@ -15,10 +14,22 @@ export interface AllMemConfig {
     lastSyncTimestamp?: number;
     compactionThreshold: number;
   };
+  syncContent: {
+    workspace: { goal: boolean; status: boolean; focus: boolean; nextSteps: boolean; risks: boolean };
+    memory: { rules: boolean; resources: boolean };
+    events: boolean;
+    userProfile: boolean;
+  };
+  injection: {
+    workspace: { goal: boolean; status: boolean; focus: boolean; nextSteps: boolean; risks: boolean };
+    memory: { rules: boolean; resources: boolean };
+    events: boolean;
+    manual: boolean;
+    userProfile: boolean;
+  };
   agents: string[];
   syncAll: boolean;
   syncProjects: string[];
-  enableDistiller: boolean;
   privacy: {
     enabled: boolean;
     sensitiveWords: string[];
@@ -42,6 +53,10 @@ export interface MemoryVersion {
   date: string;
   summary: string;
   filename: string;
+  snapshot: {
+    objects: ProjectObjects;
+    instructions: string;
+  };
 }
 
 export interface AgentDef {
@@ -97,9 +112,13 @@ export interface ProjectResource {
 export interface ProjectEvent {
   id: string;
   title: string;
+  time?: string;
+  background?: string;
   trigger: string;
   actions: string[];
   result: string;
+  status?: string;
+  nextStep?: string;
   lesson?: string;
   refs: string[];
 }
@@ -126,17 +145,16 @@ export interface Experience {
   steps?: string[];
   verification?: string;
   whyItWorks?: string;
+  boundary?: string;
+  evidenceEpisodes?: string[];
   created: string;
   updated: string;
 }
 
 export function getLLMConfigForRole(
   config: AllMemConfig["llm"],
-  role: "narrator" | "curator" | "distiller" | "general"
+  _role: "narrator" | "curator" | "distiller" | "general"
 ): AllMemConfig["llm"] {
-  if (role === "curator" && config.curatorModel) {
-    return { ...config, model: config.curatorModel };
-  }
   return config;
 }
 
@@ -145,7 +163,6 @@ export const DEFAULT_CONFIG: AllMemConfig = {
     apiKey: "",
     baseUrl: "",
     model: "",
-    curatorModel: "",
   },
   sync: {
     mode: "manual",
@@ -154,14 +171,29 @@ export const DEFAULT_CONFIG: AllMemConfig = {
     maxCharsPerTurn: 800,
     compactionThreshold: 10,
   },
+  syncContent: {
+    workspace: { goal: true, status: true, focus: true, nextSteps: true, risks: true },
+    memory: { rules: true, resources: true },
+    events: true,
+    userProfile: true,
+  },
+  injection: {
+    workspace: { goal: true, status: true, focus: true, nextSteps: true, risks: true },
+    memory: { rules: true, resources: true },
+    events: true,
+    manual: true,
+    userProfile: true,
+  },
   agents: ["claude", "codex"],
   syncAll: true,
   syncProjects: [],
-  enableDistiller: false,
   privacy: {
     enabled: false,
     sensitiveWords: [],
     replacement: "[***]",
   },
 };
+
+
+
 
