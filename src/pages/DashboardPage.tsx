@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, FolderOpen, Clock, CheckCircle2, AlertCircle, Lightbulb } from "lucide-react";
+import { RefreshCw, FolderOpen, Clock, CheckCircle2, AlertCircle } from "lucide-react";
 import { useAppStore } from "../store";
+import { showToast } from "../components/Toast";
 import { runSync } from "../core/sync";
-import { listProjects, loadConfig, loadExperiences } from "../core/storage";
+import { listProjects, loadConfig, loadExperiences, saveSyncHistory } from "../core/storage";
 import { detectAgents } from "../core/detector";
 
 export function DashboardPage() {
@@ -16,17 +17,33 @@ export function DashboardPage() {
     setLastSyncResults,
     detectedAgents,
     setDetectedAgents,
-    config,
     setConfig,
   } = useAppStore();
-  const [expCount, setExpCount] = useState(0);
+  const [, setExpCount] = useState(0);
+  const [, setSkillCount] = useState(0);
+  const [lastSyncLabel, setLastSyncLabel] = useState("未同步");
 
   useEffect(() => {
-    // Load initial data
-    listProjects().then(setProjects).catch(console.error);
-    detectAgents().then(setDetectedAgents).catch(console.error);
-    loadConfig().then(setConfig).catch(console.error);
-    loadExperiences().then(exps => setExpCount(exps.length)).catch(console.error);
+    const loadInitialData = async () => {
+      const [projectList, agents, config, experiences] = await Promise.all([
+        listProjects(),
+        detectAgents(),
+        loadConfig(),
+        loadExperiences(),
+      ]);
+      setProjects(projectList);
+      setDetectedAgents(agents);
+      setConfig(config);
+      setExpCount(experiences.length);
+      setSkillCount(experiences.filter((exp) => exp.kind === "skill").length);
+      setLastSyncLabel(
+        config.sync.lastSyncTimestamp
+          ? new Date(config.sync.lastSyncTimestamp).toLocaleString()
+          : "未同步"
+      );
+    };
+
+    loadInitialData().catch(console.error);
   }, []);
 
   const handleSync = async () => {
@@ -36,176 +53,185 @@ export function DashboardPage() {
     try {
       const results = await runSync((progress) => {
         setSyncProgress(progress);
-        // Refresh project list and experience count incrementally as each project completes
         if (progress.completedProject) {
           listProjects().then(setProjects).catch(console.error);
-          loadExperiences().then(exps => setExpCount(exps.length)).catch(console.error);
+          loadExperiences()
+            .then((exps) => {
+              setExpCount(exps.length);
+              setSkillCount(exps.filter((exp) => exp.kind === "skill").length);
+            })
+            .catch(console.error);
         }
       });
       setLastSyncResults(results);
-      // Refresh project list
-      const updated = await listProjects();
-      setProjects(updated);
-      // Refresh config to update lastSyncTimestamp
-      const updatedConfig = await loadConfig();
+
+      const [updatedProjects, updatedConfig, updatedExperiences] = await Promise.all([
+        listProjects(),
+        loadConfig(),
+        loadExperiences(),
+      ]);
+      setProjects(updatedProjects);
       setConfig(updatedConfig);
-      // Refresh experience count
-      loadExperiences().then(exps => setExpCount(exps.length)).catch(console.error);
-      // Show errors if any
+      setExpCount(updatedExperiences.length);
+      setSkillCount(updatedExperiences.filter((exp) => exp.kind === "skill").length);
+      setLastSyncLabel(
+        updatedConfig.sync.lastSyncTimestamp
+          ? new Date(updatedConfig.sync.lastSyncTimestamp).toLocaleString()
+          : "未同步"
+      );
+
       const errors = results.flatMap((r) => r.errors);
       if (errors.length > 0) {
         setSyncProgress({ stage: "错误", detail: errors.join("; "), progress: 100 });
-        return; // keep error visible
+        showToast(`同步出错: ${errors.join("; ")}`, "error");
+        await saveSyncHistory({
+          timestamp: new Date().toISOString(),
+          stage: "错误",
+          detail: errors.join("; "),
+          progress: 100,
+          success: false,
+        });
+        return;
       }
+
+      await saveSyncHistory({
+        timestamp: new Date().toISOString(),
+        stage: "完成",
+        detail: `同步完成，更新了 ${results.reduce((sum, r) => sum + r.projectsUpdated, 0)} 个项目`,
+        progress: 100,
+        success: true,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Sync failed:", msg);
       setSyncProgress({ stage: "失败", detail: msg, progress: 0 });
-      return; // keep error visible
+      showToast(`同步失败: ${msg}`, "error");
+      await saveSyncHistory({
+        timestamp: new Date().toISOString(),
+        stage: "失败",
+        detail: msg,
+        progress: 0,
+        success: false,
+      });
+      return;
     } finally {
       setIsSyncing(false);
-      setSyncProgress(null);
     }
   };
 
   return (
-    <div className="p-6 space-y-6 overflow-y-auto h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">概览</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            管理你的跨工具AI记忆
-          </p>
-        </div>
-        <button
-          onClick={handleSync}
-          disabled={isSyncing}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-          {isSyncing ? "同步中..." : "立即同步"}
-        </button>
-      </div>
-
-      {/* Sync Progress */}
-      {syncProgress && (
-        <div className="bg-card rounded-xl border border-border p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium">{syncProgress.stage}</span>
-            <span className="text-xs text-muted-foreground">{syncProgress.progress}%</span>
-          </div>
-          <div className="w-full bg-secondary rounded-full h-1.5">
-            <div
-              className="bg-primary h-1.5 rounded-full transition-all duration-300"
-              style={{ width: `${syncProgress.progress}%` }}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground mt-2">{syncProgress.detail}</p>
-        </div>
-      )}
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-4 gap-4">
-        <div className="bg-card rounded-xl border border-border p-4">
-          <div className="flex items-center gap-2 text-muted-foreground mb-2">
-            <FolderOpen size={14} />
-            <span className="text-xs font-medium">项目数</span>
-          </div>
-          <p className="text-2xl font-semibold">{projects.length}</p>
-        </div>
-
-        <div className="bg-card rounded-xl border border-border p-4">
-          <div className="flex items-center gap-2 text-muted-foreground mb-2">
-            <Lightbulb size={14} />
-            <span className="text-xs font-medium">经验数</span>
-          </div>
-          <p className="text-2xl font-semibold">{expCount}</p>
-        </div>
-
-        <div className="bg-card rounded-xl border border-border p-4">
-          <div className="flex items-center gap-2 text-muted-foreground mb-2">
-            <Clock size={14} />
-            <span className="text-xs font-medium">已检测工具</span>
-          </div>
-          <p className="text-2xl font-semibold">
-            {detectedAgents.filter((a) => a.detected).length}
-          </p>
-        </div>
-
-        <div className="bg-card rounded-xl border border-border p-4">
-          <div className="flex items-center gap-2 text-muted-foreground mb-2">
-            <CheckCircle2 size={14} />
-            <span className="text-xs font-medium">上次同步</span>
-          </div>
-          <p className="text-sm font-medium">
-            {config.sync.lastSyncTimestamp
-              ? new Date(config.sync.lastSyncTimestamp).toLocaleString()
-              : "未同步"}
-          </p>
-        </div>
-      </div>
-
-      {/* Detected Agents */}
-      <div className="bg-card rounded-xl border border-border p-4">
-        <h3 className="text-sm font-medium mb-3">已检测的AI工具</h3>
-        <div className="space-y-2">
-          {detectedAgents.map((agent) => (
-            <div
-              key={agent.id}
-              className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/50"
-            >
-              <span className="text-sm">{agent.name}</span>
-              {agent.detected ? (
-                <span className="flex items-center gap-1 text-xs text-green-600">
-                  <CheckCircle2 size={12} />
-                  已检测到
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <AlertCircle size={12} />
-                  未安装
-                </span>
-              )}
-            </div>
-          ))}
-          {detectedAgents.length === 0 && (
-            <p className="text-sm text-muted-foreground">加载中...</p>
-          )}
-        </div>
-      </div>
-
-      {/* Project List */}
-      <div className="bg-card rounded-xl border border-border p-4">
-        <h3 className="text-sm font-medium mb-3">已管理的项目</h3>
-        <div className="space-y-2">
-          {projects.map((project) => (
-            <div
-              key={project.alias}
-              className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary transition-colors"
-              onClick={() => {
-                useAppStore.getState().setSelectedProject(project.alias);
-                useAppStore.getState().setActivePage("projects");
-              }}
-            >
-              <div>
-                <span className="text-sm font-medium">{project.alias}</span>
-                <p className="text-xs text-muted-foreground">{project.path}</p>
-              </div>
-              {project.lastSync && (
-                <span className="text-xs text-muted-foreground">
-                  {new Date(project.lastSync).toLocaleDateString()}
-                </span>
-              )}
-            </div>
-          ))}
-          {projects.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              暂无项目。点击"立即同步"开始提取记忆。
+    <div className="h-full overflow-y-auto p-6">
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">概览</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              管理你的跨工具 AI 记忆
             </p>
-          )}
+          </div>
+          <button
+            onClick={handleSync}
+            disabled={isSyncing}
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+            {isSyncing ? "同步中..." : "立即同步"}
+          </button>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard icon={FolderOpen} label="项目数" value={String(projects.length)} />
+          <StatCard
+            icon={Clock}
+            label="已检测工具"
+            value={String(detectedAgents.filter((a) => a.detected).length)}
+          />
+          <StatCard icon={CheckCircle2} label="上次同步" value={lastSyncLabel} compact />
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-medium">已检测的 AI 工具</h3>
+          <div className="space-y-2">
+            {detectedAgents.map((agent) => (
+              <div
+                key={agent.id}
+                className="flex items-center justify-between rounded-lg bg-secondary/50 px-3 py-2"
+              >
+                <span className="text-sm">{agent.name}</span>
+                {agent.detected ? (
+                  <span className="flex items-center gap-1 text-xs text-green-600">
+                    <CheckCircle2 size={12} />
+                    已检测到
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <AlertCircle size={12} />
+                    未安装
+                  </span>
+                )}
+              </div>
+            ))}
+            {detectedAgents.length === 0 && (
+              <p className="text-sm text-muted-foreground">加载中...</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-medium">已管理的项目</h3>
+          <div className="space-y-2">
+            {projects.map((project) => (
+              <div
+                key={project.alias}
+                className="cursor-pointer rounded-lg bg-secondary/50 px-3 py-2 transition-colors hover:bg-secondary"
+                onClick={() => {
+                  useAppStore.getState().setSelectedProject(project.alias);
+                  useAppStore.getState().setActivePage("projects");
+                }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-sm font-medium">{project.alias}</span>
+                    <p className="text-xs text-muted-foreground">{project.path}</p>
+                  </div>
+                  {project.lastSync && (
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(project.lastSync).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {projects.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                暂无项目。点击"立即同步"开始提取记忆。
+              </p>
+            )}
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  compact = false,
+}: {
+  icon: typeof FolderOpen;
+  label: string;
+  value: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border border-border bg-card p-4">
+      <div className="mb-2 flex items-center gap-2 text-muted-foreground">
+        <Icon size={14} />
+        <span className="text-xs font-medium">{label}</span>
+      </div>
+      <p className={compact ? "break-words text-sm font-medium leading-5" : "text-2xl font-semibold"}>{value}</p>
     </div>
   );
 }

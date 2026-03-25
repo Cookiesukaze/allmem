@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
+import { ToastContainer } from "./components/Toast";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ExperiencesPage } from "./pages/ExperiencesPage";
@@ -31,6 +32,7 @@ function App() {
           {activePage === "settings" && <SettingsPage />}
         </main>
       </div>
+      <ToastContainer />
     </div>
   );
 }

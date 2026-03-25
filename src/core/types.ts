@@ -1,36 +1,47 @@
-// AllMem core types
+﻿// AllMem core types
 
 export interface AllMemConfig {
   llm: {
     apiKey: string;
     baseUrl: string;
     model: string;
-    curatorModel?: string; // 廉价模型用于 Curator（记忆压缩），留空则与主模型相同
   };
   sync: {
     mode: "manual" | "auto";
     intervalMinutes: number;
-    maxTurns: number;        // max conversation turns to process per project
-    maxCharsPerTurn: number; // truncate each turn to this many chars
-    lastSyncTimestamp?: number; // epoch ms of last sync
-    compactionThreshold: number; // number of recent entries before compacting into latest.md
+    maxTurns: number;
+    maxCharsPerTurn: number;
+    lastSyncTimestamp?: number;
+    compactionThreshold: number;
   };
-  agents: string[];          // enabled agent ids: ["claude", "codex"]
-  syncAll: boolean;            // true = sync all detected projects, false = only syncProjects
-  syncProjects: string[];    // project aliases to sync (only used when syncAll=false)
-  enableDistiller: boolean;    // 是否启用经验蒸馏（新功能，默认关闭）
+  syncContent: {
+    workspace: { goal: boolean; status: boolean; focus: boolean; nextSteps: boolean; risks: boolean };
+    memory: { rules: boolean; resources: boolean };
+    events: boolean;
+    userProfile: boolean;
+  };
+  injection: {
+    workspace: { goal: boolean; status: boolean; focus: boolean; nextSteps: boolean; risks: boolean };
+    memory: { rules: boolean; resources: boolean };
+    events: boolean;
+    manual: boolean;
+    userProfile: boolean;
+  };
+  agents: string[];
+  syncAll: boolean;
+  syncProjects: string[];
   privacy: {
     enabled: boolean;
-    sensitiveWords: string[];  // words to redact before LLM processing and in stored memories
-    replacement: string;       // replacement text, default "[***]"
+    sensitiveWords: string[];
+    replacement: string;
   };
 }
 
 export interface ProjectMeta {
   alias: string;
   path: string;
-  description: string;    // auto-generated: what this project is, tech stack, current state
-  notes: string;          // user-editable free-form notes
+  description: string;
+  notes: string;
   created: string;
   lastSync: string | null;
   currentVersion: number;
@@ -42,6 +53,10 @@ export interface MemoryVersion {
   date: string;
   summary: string;
   filename: string;
+  snapshot: {
+    objects: ProjectObjects;
+    instructions: string;
+  };
 }
 
 export interface AgentDef {
@@ -72,27 +87,74 @@ export interface ExtractedMemory {
   rawTurns: number;
 }
 
+export interface ProjectState {
+  goal: string;
+  currentStatus: string;
+  currentFocus: string;
+  nextSteps: string[];
+  risks: string[];
+}
+
+export interface ProjectRule {
+  id: string;
+  content: string;
+  rationale?: string;
+}
+
+export interface ProjectResource {
+  id: string;
+  label: string;
+  kind: "path" | "command" | "url" | "doc" | "env";
+  value: string;
+  note?: string;
+}
+
+export interface ProjectEvent {
+  id: string;
+  title: string;
+  time?: string;
+  background?: string;
+  trigger: string;
+  actions: string[];
+  result: string;
+  status?: string;
+  nextStep?: string;
+  lesson?: string;
+  refs: string[];
+}
+
+export interface ProjectObjects {
+  state: ProjectState;
+  rules: ProjectRule[];
+  resources: ProjectResource[];
+  events: ProjectEvent[];
+  updatedAt: string;
+}
+
 export interface Experience {
   id: string;
   title: string;
   content: string;
   context?: string;
+  kind?: "experience" | "skill";
   tags: string[];
   scope: "global" | "project";
   sources: Array<{ project: string; count: number; lastSeen: string }>;
   confidence: number;
+  trigger?: string;
+  steps?: string[];
+  verification?: string;
+  whyItWorks?: string;
+  boundary?: string;
+  evidenceEpisodes?: string[];
   created: string;
   updated: string;
 }
 
-/** 根据角色返回对应的 LLM 配置（Curator 用廉价模型，其余用主模型） */
 export function getLLMConfigForRole(
   config: AllMemConfig["llm"],
-  role: "narrator" | "curator" | "distiller" | "general"
+  _role: "narrator" | "curator" | "distiller" | "general"
 ): AllMemConfig["llm"] {
-  if (role === "curator" && config.curatorModel) {
-    return { ...config, model: config.curatorModel };
-  }
   return config;
 }
 
@@ -101,7 +163,6 @@ export const DEFAULT_CONFIG: AllMemConfig = {
     apiKey: "",
     baseUrl: "",
     model: "",
-    curatorModel: "",
   },
   sync: {
     mode: "manual",
@@ -110,13 +171,29 @@ export const DEFAULT_CONFIG: AllMemConfig = {
     maxCharsPerTurn: 800,
     compactionThreshold: 10,
   },
+  syncContent: {
+    workspace: { goal: true, status: true, focus: true, nextSteps: true, risks: true },
+    memory: { rules: true, resources: true },
+    events: true,
+    userProfile: true,
+  },
+  injection: {
+    workspace: { goal: true, status: true, focus: true, nextSteps: true, risks: true },
+    memory: { rules: true, resources: true },
+    events: true,
+    manual: true,
+    userProfile: true,
+  },
   agents: ["claude", "codex"],
   syncAll: true,
   syncProjects: [],
-  enableDistiller: false,
   privacy: {
     enabled: false,
     sensitiveWords: [],
     replacement: "[***]",
   },
 };
+
+
+
+
