@@ -12,7 +12,6 @@ export function DashboardPage() {
     setProjects,
     isSyncing,
     setIsSyncing,
-    syncProgress,
     setSyncProgress,
     setLastSyncResults,
     detectedAgents,
