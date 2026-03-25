@@ -8,13 +8,18 @@ import { UserPage } from "./pages/UserPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ChatPage } from "./pages/ChatPage";
 import { useAppStore } from "./store";
-import { initStorage } from "./core/storage";
+import { initStorage, loadScannedIndex } from "./core/storage";
 
 function App() {
-  const { activePage } = useAppStore();
+  const { activePage, setScannedIndex } = useAppStore();
 
   useEffect(() => {
-    initStorage().catch(console.error);
+    initStorage()
+      .then(async () => {
+        const idx = await loadScannedIndex();
+        if (idx) setScannedIndex(idx.cards);
+      })
+      .catch(console.error);
   }, []);
 
   return (

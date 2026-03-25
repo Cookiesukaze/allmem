@@ -9,6 +9,7 @@ export async function detectAgents(): Promise<AgentDef[]> {
 
   const claudeDir = await join(home, ".claude", "projects");
   const codexDir = await join(home, ".codex", "sessions");
+  const cursorDir = await join(home, ".cursor", "projects");
 
   const defs: Omit<AgentDef, "detected">[] = [
     {
@@ -24,6 +25,14 @@ export async function detectAgents(): Promise<AgentDef[]> {
       checkDir: codexDir,
       logDir: codexDir,
       logPattern: /rollout-.*\.jsonl$/,
+    },
+    {
+      id: "cursor",
+      name: "Cursor IDE",
+      checkDir: cursorDir,
+      logDir: cursorDir,
+      // Cursor transcript JSONL is typically under agent-transcripts/
+      logPattern: /agent-transcripts\/.*\.jsonl$/i,
     },
   ];
 

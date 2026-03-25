@@ -151,6 +151,88 @@ export async function extractUserInfo(
 }
 
 /**
+ * Hard-dedupe user profile markdown content by section + bullet text.
+ * Keeps first occurrence order and drops repeated/empty bullet points.
+ */
+export function dedupeUserProfileMarkdown(content: string | null | undefined): string {
+  const text = (content ?? "").replace(/\r\n/g, "\n").trim();
+  if (!text) return "";
+
+  const lines = text.split("\n");
+  const out: string[] = [];
+  const seenSectionKeys = new Set<string>();
+  const seenBulletBySection = new Map<string, Set<string>>();
+  let currentSection = "__root__";
+  let lastWasBlank = false;
+
+  const normalizeKey = (v: string) =>
+    v
+      .toLowerCase()
+      .replace(/[`*_~]/g, "")
+      .replace(/[：:]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      if (!lastWasBlank && out.length > 0) out.push("");
+      lastWasBlank = true;
+      continue;
+    }
+    lastWasBlank = false;
+
+    if (/^##\s+/.test(trimmed)) {
+      const sectionKey = normalizeKey(trimmed.replace(/^##\s+/, ""));
+      if (!sectionKey) continue;
+      if (seenSectionKeys.has(sectionKey)) {
+        currentSection = sectionKey;
+        if (!seenBulletBySection.has(currentSection)) {
+          seenBulletBySection.set(currentSection, new Set());
+        }
+        continue;
+      }
+      seenSectionKeys.add(sectionKey);
+      currentSection = sectionKey;
+      if (!seenBulletBySection.has(currentSection)) {
+        seenBulletBySection.set(currentSection, new Set());
+      }
+      out.push(`## ${trimmed.replace(/^##\s+/, "").trim()}`);
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bulletMatch) {
+      const bulletText = bulletMatch[1].trim();
+      if (!bulletText) continue;
+      const sectionSeen =
+        seenBulletBySection.get(currentSection) ??
+        new Set<string>();
+      seenBulletBySection.set(currentSection, sectionSeen);
+      const key = normalizeKey(bulletText);
+      if (!key || sectionSeen.has(key)) continue;
+      sectionSeen.add(key);
+      out.push(`- ${bulletText}`);
+      continue;
+    }
+
+    // For non-bullet prose lines, keep once globally.
+    const proseKey = `p:${normalizeKey(trimmed)}`;
+    const sectionSeen =
+      seenBulletBySection.get(currentSection) ??
+      new Set<string>();
+    seenBulletBySection.set(currentSection, sectionSeen);
+    if (!normalizeKey(trimmed) || sectionSeen.has(proseKey)) continue;
+    sectionSeen.add(proseKey);
+    out.push(trimmed);
+  }
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
  * Generate a one-line summary for a memory version
  */
 export async function generateVersionSummary(

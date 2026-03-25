@@ -1,20 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, CheckCircle2, RefreshCw, Trash2 } from "lucide-react";
 import { useAppStore } from "../store";
-import { loadConfig, saveConfig, listProjects } from "../core/storage";
-import { installSkillToClaude, installSkillToCodex, isSkillInstalled, uninstallSkillFromClaude, uninstallSkillFromCodex } from "../core/installer";
+import { loadConfig, saveConfig } from "../core/storage";
+import {
+  installSkillToClaude,
+  installSkillToCodex,
+  installSkillToCursor,
+  isSkillInstalled,
+  uninstallSkillFromClaude,
+  uninstallSkillFromCodex,
+  uninstallSkillFromCursor,
+} from "../core/installer";
 import { detectAgents } from "../core/detector";
-import { extractClaudeSessions, extractCodexSessions, groupByProject } from "../core/extractor";
 
 export function SettingsPage() {
-  const { config, setConfig, detectedAgents, setDetectedAgents } = useAppStore();
+  const {
+    config,
+    setConfig,
+    setDetectedAgents,
+    detectedAgents,
+  } = useAppStore();
   const [skillStatus, setSkillStatus] = useState<Record<string, boolean>>({});
   const [installingSkill, setInstallingSkill] = useState<string | null>(null);
   const [uninstallingSkill, setUninstallingSkill] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [allProjectAliases, setAllProjectAliases] = useState<string[]>([]);
-  const [lastManualSelection, setLastManualSelection] = useState<string[] | null>(null);
-
   const [llmDirty, setLlmDirty] = useState(false);
   const [syncParamsDirty, setSyncParamsDirty] = useState(false);
   const [privacyDirty, setPrivacyDirty] = useState(false);
@@ -22,9 +31,6 @@ export function SettingsPage() {
   const [showLLMSavedHint, setShowLLMSavedHint] = useState(false);
   const [showSyncParamsSavedHint, setShowSyncParamsSavedHint] = useState(false);
   const [showPrivacySavedHint, setShowPrivacySavedHint] = useState(false);
-
-  const [syncSelectionDirty, setSyncSelectionDirty] = useState(false);
-  const [showSyncSavedHint, setShowSyncSavedHint] = useState(false);
 
   const [skillToast, setSkillToast] = useState<{ tool: string; message: string } | null>(null);
   const skillToastTimerRef = useRef<number | null>(null);
@@ -36,20 +42,22 @@ export function SettingsPage() {
         setLlmDirty(false);
         setSyncParamsDirty(false);
         setPrivacyDirty(false);
-        setSyncSelectionDirty(false);
         setShowLLMSavedHint(false);
         setShowSyncParamsSavedHint(false);
         setShowPrivacySavedHint(false);
-        setShowSyncSavedHint(false);
-        // Only cache manual selection when we are currently in manual mode.
-        // If syncAll=true, treat cache as missing so we can fallback to "all selected".
-        setLastManualSelection(loaded.syncAll ? null : (loaded.syncProjects ?? null));
       })
       .catch(console.error);
     detectAgents().then(setDetectedAgents).catch(console.error);
     checkSkillStatus();
-    scanDetectedProjects();
   }, []);
+
+  const detectedMap = useMemo(() => {
+    const m: Record<string, boolean> = {};
+    for (const a of detectedAgents) m[a.id] = a.detected;
+    return m;
+  }, [detectedAgents]);
+
+  const detectionReady = detectedAgents.length > 0;
 
   useEffect(() => {
     return () => {
@@ -62,39 +70,11 @@ export function SettingsPage() {
   const checkSkillStatus = async () => {
     const claude = await isSkillInstalled("claude").catch(() => false);
     const codex = await isSkillInstalled("codex").catch(() => false);
-    setSkillStatus({ claude, codex });
-  };
-
-  const scanDetectedProjects = async () => {
-    try {
-      // Get projects from conversation logs
-      const [claudeSessions, codexSessions] = await Promise.all([
-        extractClaudeSessions().catch(() => []),
-        extractCodexSessions().catch(() => []),
-      ]);
-      const all = [...claudeSessions, ...codexSessions];
-      const grouped = groupByProject(all);
-      const aliases = new Set<string>();
-      for (const [, sessions] of grouped) {
-        const name = sessions[0].projectName;
-        const alias = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-        aliases.add(alias);
-      }
-
-      // Also include projects already in ~/.allmem/projects/
-      const existingProjects = await listProjects().catch(() => []);
-      for (const p of existingProjects) {
-        aliases.add(p.alias);
-      }
-
-      setAllProjectAliases([...aliases].sort());
-    } catch {
-      // ignore
-    }
+    const cursor = await isSkillInstalled("cursor").catch(() => false);
+    setSkillStatus({ claude, codex, cursor });
   };
 
   const handleSave = async () => {
-    const shouldShowSyncHint = syncSelectionDirty;
     const shouldShowLLMHint = llmDirty;
     const shouldShowSyncParamsHint = syncParamsDirty;
     const shouldShowPrivacyHint = privacyDirty;
@@ -104,12 +84,6 @@ export function SettingsPage() {
     setLlmDirty(false);
     setSyncParamsDirty(false);
     setPrivacyDirty(false);
-    setSyncSelectionDirty(false);
-
-    if (shouldShowSyncHint) {
-      setShowSyncSavedHint(true);
-      setTimeout(() => setShowSyncSavedHint(false), 3000);
-    }
     if (shouldShowLLMHint) {
       setShowLLMSavedHint(true);
       setTimeout(() => setShowLLMSavedHint(false), 3000);
@@ -132,18 +106,33 @@ export function SettingsPage() {
       ok = await installSkillToClaude();
     } else if (tool === "codex") {
       ok = await installSkillToCodex();
+    } else if (tool === "cursor") {
+      ok = await installSkillToCursor();
     }
     if (ok) {
       const alreadyInstalled = !!skillStatus[tool];
       setSkillStatus((prev) => ({ ...prev, [tool]: true }));
       setSkillToast({
         tool,
-        message: tool === "claude" ? (alreadyInstalled ? "Claude skill 已更新!" : "Claude skill 已安装!") : alreadyInstalled ? "Codex skill 已更新!" : "Codex skill 已安装!",
+        message:
+          tool === "claude"
+            ? alreadyInstalled
+              ? "Claude skill 已更新!"
+              : "Claude skill 已安装!"
+            : tool === "codex"
+              ? alreadyInstalled
+                ? "Codex skill 已更新!"
+                : "Codex skill 已安装!"
+              : alreadyInstalled
+                ? "Cursor skill 已更新!"
+                : "Cursor skill 已安装!",
       });
       if (skillToastTimerRef.current) {
         window.clearTimeout(skillToastTimerRef.current);
       }
       skillToastTimerRef.current = window.setTimeout(() => setSkillToast(null), 2500);
+      // Refresh from filesystem to ensure UI shows the correct "reinstall" state.
+      await checkSkillStatus();
     }
     // Brief flash to show completion
     setTimeout(() => setInstallingSkill(null), 1000);
@@ -156,33 +145,28 @@ export function SettingsPage() {
       ok = await uninstallSkillFromClaude();
     } else if (tool === "codex") {
       ok = await uninstallSkillFromCodex();
+    } else if (tool === "cursor") {
+      ok = await uninstallSkillFromCursor();
     }
     if (ok) {
-      setSkillStatus((prev) => ({ ...prev, [tool]: false }));
       setSkillToast({
         tool,
-        message: tool === "claude" ? "Claude skill 已卸载!" : "Codex skill 已卸载!",
+        message:
+          tool === "claude"
+            ? "Claude skill 已卸载!"
+            : tool === "codex"
+              ? "Codex skill 已卸载!"
+              : "Cursor skill 已卸载!",
       });
       if (skillToastTimerRef.current) {
         window.clearTimeout(skillToastTimerRef.current);
       }
       skillToastTimerRef.current = window.setTimeout(() => setSkillToast(null), 2500);
+      // Refresh from filesystem to ensure UI shows correct status.
+      await checkSkillStatus();
     }
     setTimeout(() => setUninstallingSkill(null), 1000);
   };
-
-  const toggleSyncProject = (alias: string) => {
-    const current = config.syncProjects ?? [];
-    const updated = current.includes(alias)
-      ? current.filter((a) => a !== alias)
-      : [...current, alias];
-    setLastManualSelection(updated);
-    setShowSyncSavedHint(false);
-    setSyncSelectionDirty(true);
-    setConfig({ ...config, syncAll: false, syncProjects: updated });
-  };
-
-  const isSyncAll = config.syncAll ?? true;
 
   return (
     <div className="p-6 space-y-6 overflow-y-auto h-full">
@@ -386,82 +370,6 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {/* Project Sync Selection */}
-      <div className="bg-card rounded-xl border border-border p-4 space-y-4 relative">
-        {syncSelectionDirty && (
-          <div className="absolute top-3 right-3 flex items-center gap-2 text-amber-600">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-            <span className="text-xs">有改动未保存</span>
-          </div>
-        )}
-        <h3 className="text-sm font-medium">同步项目选择</h3>
-        <p className="text-xs text-muted-foreground">
-          勾选"全部同步"会同步所有检测到的项目；取消后可单独选择
-        </p>
-        {showSyncSavedHint && (
-          <p className="text-xs text-green-600/80">
-            同步默认范围已更新，下次在概览页同步时会作为默认选项。
-          </p>
-        )}
-
-        <div className="space-y-1.5">
-          <label className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary">
-            <input
-              type="checkbox"
-              checked={isSyncAll}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  setLastManualSelection(config.syncProjects ?? []);
-                  setShowSyncSavedHint(false);
-                  setSyncSelectionDirty(true);
-                  setConfig({ ...config, syncAll: true, syncProjects: [] });
-                } else {
-                  setShowSyncSavedHint(false);
-                  setSyncSelectionDirty(true);
-                  // Switch to manual selection, restore previous manual selection if present.
-                  setConfig({
-                    ...config,
-                    syncAll: false,
-                    syncProjects: lastManualSelection ?? [...allProjectAliases],
-                  });
-                }
-              }}
-              className="accent-primary"
-            />
-            <span className="text-sm font-medium">全部同步</span>
-          </label>
-
-          {!isSyncAll && allProjectAliases.map((alias) => (
-            <label
-              key={alias}
-              className="flex items-center gap-2 py-1.5 px-3 rounded-lg bg-secondary/50 cursor-pointer hover:bg-secondary"
-            >
-              <input
-                type="checkbox"
-                checked={(config.syncProjects ?? []).includes(alias)}
-                onChange={() => toggleSyncProject(alias)}
-                className="accent-primary"
-              />
-              <span className="text-sm">{alias}</span>
-            </label>
-          ))}
-
-          {isSyncAll && allProjectAliases.length > 0 && (
-            <div className="px-3 py-1.5">
-              <p className="text-xs text-muted-foreground">
-                当前将同步所有 {allProjectAliases.length} 个项目：{allProjectAliases.join("、")}
-              </p>
-            </div>
-          )}
-
-          {allProjectAliases.length === 0 && (
-            <p className="text-xs text-muted-foreground py-2">
-              未检测到项目，请先在概览页面执行一次同步
-            </p>
-          )}
-        </div>
-      </div>
-
       {/* Privacy Protection */}
       <div className="bg-card rounded-xl border border-border p-4 space-y-4 relative">
         {privacyDirty && (
@@ -564,37 +472,45 @@ export function SettingsPage() {
         )}
 
         <div className="space-y-2">
-          {detectedAgents
-            .filter((a) => a.detected)
-            .map((agent) => (
+          {[
+            { id: "claude", name: "Claude Code" },
+            { id: "codex", name: "Codex CLI" },
+            { id: "cursor", name: "Cursor IDE" },
+          ].map((tool) => (
               <div
-                key={agent.id}
+              key={tool.id}
                 className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/50"
               >
-                <span className="text-sm">{agent.name}</span>
+              <span className="text-sm">{tool.name}</span>
                 <div className="flex items-center gap-2">
-                  {skillStatus[agent.id] && installingSkill !== agent.id && uninstallingSkill !== agent.id && (
+                {skillStatus[tool.id] &&
+                  installingSkill !== tool.id &&
+                  uninstallingSkill !== tool.id && (
                     <span className="flex items-center gap-1 text-xs text-green-600">
                       <CheckCircle2 size={12} />
                       已安装
                     </span>
                   )}
-                  {installingSkill === agent.id ? (
+                {installingSkill === tool.id ? (
                     <span className="flex items-center gap-1 text-xs text-green-600">
-                      <CheckCircle2 size={12} />
-                      {skillStatus[agent.id] ? "已更新!" : "已安装!"}
+                    <CheckCircle2 size={12} />
+                    {skillStatus[tool.id] ? "已更新!" : "已安装!"}
                     </span>
-                  ) : uninstallingSkill === agent.id ? (
+                ) : uninstallingSkill === tool.id ? (
                     <span className="flex items-center gap-1 text-xs text-red-500">
                       已卸载!
+                    </span>
+                  ) : detectionReady && detectedMap[tool.id] === false ? (
+                    <span className="flex items-center gap-1 text-xs text-amber-600">
+                      {skillStatus[tool.id] ? "已安装（但未检测到工具）" : `未检测到工具（建议先安装/启动 ${tool.name}）`}
                     </span>
                   ) : (
                     <>
                       <button
-                        onClick={() => handleInstallSkill(agent.id)}
+                      onClick={() => handleInstallSkill(tool.id)}
                         className="flex items-center gap-1 text-xs text-primary hover:opacity-80"
                       >
-                        {skillStatus[agent.id] ? (
+                      {skillStatus[tool.id] ? (
                           <>
                             <RefreshCw size={12} />
                             重新安装
@@ -604,22 +520,22 @@ export function SettingsPage() {
                             <Download size={12} />
                             安装
                           </>
-                        )}
+                      )}
                       </button>
-                      {skillStatus[agent.id] && (
+                    {skillStatus[tool.id] && (
                         <button
-                          onClick={() => handleUninstallSkill(agent.id)}
+                          onClick={() => handleUninstallSkill(tool.id)}
                           className="flex items-center gap-1 text-xs text-red-500 hover:opacity-80"
                         >
                           <Trash2 size={12} />
                           卸载
                         </button>
-                      )}
+                    )}
                     </>
                   )}
                 </div>
               </div>
-            ))}
+          ))}
         </div>
       </div>
 

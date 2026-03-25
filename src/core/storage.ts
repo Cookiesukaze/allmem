@@ -7,6 +7,8 @@ import {
   writeTextFile,
   readDir,
   remove,
+  rename,
+  copyFile,
 } from "@tauri-apps/plugin-fs";
 import { join, homeDir } from "@tauri-apps/api/path";
 import type { AllMemConfig, ProjectMeta, MemoryVersion, Experience } from "./types";
@@ -25,7 +27,16 @@ async function getAllMemDir(): Promise<string> {
 
 export async function initStorage(): Promise<void> {
   const dir = await getAllMemDir();
-  const subDirs = ["raw", "user", "user/history", "projects", "logs", "experiences", "experiences/history"];
+  const subDirs = [
+    "raw",
+    "user",
+    "user/history",
+    "projects",
+    "logs",
+    "experiences",
+    "experiences/history",
+    "scan",
+  ];
   for (const sub of subDirs) {
     const d = await join(dir, ...sub.split("/"));
     if (!(await exists(d))) {
@@ -34,16 +45,54 @@ export async function initStorage(): Promise<void> {
   }
 }
 
+// ── Scan Index (Project Cards) ─────────────────────────────────────────────
+
+export async function loadScannedIndex(): Promise<import("./types").ScannedIndex | null> {
+  const dir = await getAllMemDir();
+  const filePath = await join(dir, "scan", "scan-index.json");
+  try {
+    const content = await readTextFile(filePath);
+    return JSON.parse(content) as import("./types").ScannedIndex;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveScannedIndex(index: import("./types").ScannedIndex): Promise<void> {
+  const dir = await getAllMemDir();
+  const filePath = await join(dir, "scan", "scan-index.json");
+  await writeTextFile(filePath, JSON.stringify(index, null, 2));
+}
+
 // ── Config ─────────────────────────────────────────────────────────────
 
 export async function loadConfig(): Promise<AllMemConfig> {
   const dir = await getAllMemDir();
   const configPath = await join(dir, "config.json");
+
+  const { DEFAULT_CONFIG } = await import("./types");
   try {
     const content = await readTextFile(configPath);
-    return JSON.parse(content) as AllMemConfig;
+    const parsed = JSON.parse(content) as Partial<AllMemConfig>;
+
+    // Merge defaults for forward compatibility (new fields / new agents).
+    const merged: AllMemConfig = {
+      ...DEFAULT_CONFIG,
+      ...parsed,
+      llm: { ...DEFAULT_CONFIG.llm, ...(parsed as Partial<AllMemConfig>).llm },
+      sync: { ...DEFAULT_CONFIG.sync, ...(parsed as Partial<AllMemConfig>).sync },
+      privacy: { ...DEFAULT_CONFIG.privacy, ...(parsed as Partial<AllMemConfig>).privacy },
+      agents:
+        Array.isArray(parsed.agents) && parsed.agents.length > 0
+          ? [...parsed.agents]
+          : [...DEFAULT_CONFIG.agents],
+    };
+
+    // Ensure cursor sync support is enabled by default.
+    if (!merged.agents.includes("cursor")) merged.agents.push("cursor");
+
+    return merged;
   } catch {
-    const { DEFAULT_CONFIG } = await import("./types");
     return DEFAULT_CONFIG;
   }
 }
@@ -73,6 +122,13 @@ export async function saveUserMemory(
   const historyDir = await join(userDir, "history");
 
   const existing = await loadUserMemory();
+  if (
+    existing &&
+    normalizeForStableCompare(existing) === normalizeForStableCompare(content)
+  ) {
+    // Skip creating another history snapshot when profile content is unchanged.
+    return;
+  }
   let version = 1;
   if (existing) {
     const historyFiles = await listVersions(historyDir);
@@ -336,6 +392,131 @@ export async function deleteVersion(
   }
 }
 
+// —— Alias Migration / Deduplication ——————————————————————————————————————————————
+
+function normalizeProjectPath(p: string): string {
+  return p.replace(/\//g, "\\").toLowerCase().trim();
+}
+
+async function ensureDir(path: string): Promise<void> {
+  if (!(await exists(path))) {
+    await mkdir(path, { recursive: true });
+  }
+}
+
+async function copyIfMissing(fromPath: string, toPath: string): Promise<void> {
+  if (!(await exists(fromPath))) return;
+  if (await exists(toPath)) return;
+  await copyFile(fromPath, toPath);
+}
+
+async function appendRecentIfPresent(fromPath: string, toPath: string): Promise<void> {
+  if (!(await exists(fromPath))) return;
+  const from = await readTextFile(fromPath).catch(() => "");
+  if (!from.trim()) return;
+
+  const to = await readTextFile(toPath).catch(() => "");
+  if (!to.trim()) {
+    await writeTextFile(toPath, from);
+    return;
+  }
+
+  await writeTextFile(toPath, `${to.trimEnd()}\n\n${from.trimStart()}`);
+}
+
+async function copyHistoryFiles(oldHistoryDir: string, newHistoryDir: string, oldAlias: string): Promise<void> {
+  if (!(await exists(oldHistoryDir))) return;
+  await ensureDir(newHistoryDir);
+
+  const entries = await readDir(oldHistoryDir).catch(() => []);
+  for (const e of entries) {
+    if (!e.name || e.isDirectory) continue;
+    const src = await join(oldHistoryDir, e.name);
+    let dst = await join(newHistoryDir, e.name);
+    if (await exists(dst)) {
+      dst = await join(newHistoryDir, `${oldAlias}__${e.name}`);
+    }
+    await copyFile(src, dst).catch(() => {});
+  }
+}
+
+/**
+ * Deduplicate project aliases that point to the same real path.
+ * Returns removed legacy aliases (e.g. ["asit"] migrated to "travel_asit").
+ */
+export async function dedupeProjectAliasesByPath(
+  preferredAlias: string,
+  projectPath: string
+): Promise<string[]> {
+  const normalizedTargetPath = normalizeProjectPath(projectPath);
+  if (!preferredAlias || !normalizedTargetPath) return [];
+
+  const all = await listProjects();
+  const duplicates = all.filter(
+    (p) =>
+      p.alias !== preferredAlias &&
+      p.path &&
+      normalizeProjectPath(p.path) === normalizedTargetPath
+  );
+  if (duplicates.length === 0) return [];
+
+  const dir = await getAllMemDir();
+  const preferredDir = await join(dir, "projects", preferredAlias);
+  const removed: string[] = [];
+
+  for (const dup of duplicates) {
+    const oldAlias = dup.alias;
+    const oldDir = await join(dir, "projects", oldAlias);
+    if (!(await exists(oldDir))) continue;
+
+    const preferredExists = await exists(preferredDir);
+
+    if (!preferredExists) {
+      // Fast path: target doesn't exist, direct rename keeps all files/history.
+      await rename(oldDir, preferredDir).catch(async () => {
+        await ensureDir(preferredDir);
+      });
+    } else {
+      // Merge path: keep preferred alias directory, merge useful artifacts from legacy alias.
+      await ensureDir(preferredDir);
+      await copyIfMissing(await join(oldDir, "latest.md"), await join(preferredDir, "latest.md"));
+      await copyIfMissing(
+        await join(oldDir, "instructions.md"),
+        await join(preferredDir, "instructions.md")
+      );
+      await appendRecentIfPresent(await join(oldDir, "recent.md"), await join(preferredDir, "recent.md"));
+      await copyHistoryFiles(
+        await join(oldDir, "history"),
+        await join(preferredDir, "history"),
+        oldAlias
+      );
+    }
+
+    // Merge metadata conservatively.
+    const oldMeta = await loadProjectMeta(oldAlias);
+    const newMeta = await loadProjectMeta(preferredAlias);
+    const merged: ProjectMeta = {
+      alias: preferredAlias,
+      path: projectPath,
+      description: newMeta?.description || oldMeta?.description || "",
+      notes: newMeta?.notes || oldMeta?.notes || "",
+      created: newMeta?.created || oldMeta?.created || new Date().toISOString(),
+      lastSync: newMeta?.lastSync || oldMeta?.lastSync || new Date().toISOString(),
+      currentVersion: Math.max(newMeta?.currentVersion ?? 0, oldMeta?.currentVersion ?? 0),
+      status: "active",
+    };
+    await saveProjectMeta(preferredAlias, merged);
+
+    // Remove legacy alias directory after successful merge.
+    if (await exists(oldDir)) {
+      await remove(oldDir, { recursive: true }).catch(() => {});
+    }
+    removed.push(oldAlias);
+  }
+
+  return removed;
+}
+
 // ── Raw Backup ─────────────────────────────────────────────────────────
 
 export async function saveRawBackup(
@@ -411,4 +592,14 @@ function formatDateForFilename(date: Date): string {
   const min = String(date.getMinutes()).padStart(2, "0");
   const s = String(date.getSeconds()).padStart(2, "0");
   return `${y}-${m}-${d}_${h}${min}${s}`;
+}
+
+function normalizeForStableCompare(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

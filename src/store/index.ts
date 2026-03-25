@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AllMemConfig, ProjectMeta, SyncResult } from "../core/types";
+import type { AllMemConfig, ProjectMeta, ScannedProjectCard, SyncResult } from "../core/types";
 import { DEFAULT_CONFIG } from "../core/types";
 
 interface ChatMessage {
@@ -42,6 +42,12 @@ interface AppState {
   detectedAgents: { id: string; name: string; detected: boolean }[];
   setDetectedAgents: (agents: AppState["detectedAgents"]) => void;
 
+  // Scanned projects (from transcripts) for selection UI
+  scannedProjectCards: ScannedProjectCard[];
+  scannedProjectAliases: string[];
+  scannedAliasEditorsMap: Record<string, string[]>;
+  setScannedIndex: (cards: ScannedProjectCard[]) => void;
+
   // Chat
   chatMessages: ChatMessage[];
   chatLoading: boolean;
@@ -77,6 +83,26 @@ export const useAppStore = create<AppState>((set) => ({
 
   detectedAgents: [],
   setDetectedAgents: (agents) => set({ detectedAgents: agents }),
+
+  scannedProjectCards: [],
+  scannedProjectAliases: [],
+  scannedAliasEditorsMap: {},
+  setScannedIndex: (cards) => {
+    const normalizedCards = cards.map((c) => {
+      const fallbackKey = c.key?.trim()
+        ? c.key
+        : c.projectPath?.trim()
+          ? `path:${c.projectPath.replace(/\//g, "\\").trim().toLowerCase()}`
+          : c.cursorProjectId
+            ? `cursor:${c.cursorProjectId}`
+            : `alias:${c.alias}`;
+      return { ...c, key: c.key || fallbackKey };
+    });
+    const aliasList = normalizedCards.map((c) => c.alias).sort();
+    const editorsMap: Record<string, string[]> = {};
+    for (const c of normalizedCards) editorsMap[c.key] = c.ides;
+    set({ scannedProjectCards: normalizedCards, scannedProjectAliases: aliasList, scannedAliasEditorsMap: editorsMap });
+  },
 
   chatMessages: [],
   chatLoading: false,

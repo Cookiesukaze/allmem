@@ -131,6 +131,106 @@ allowed-tools:
 告诉用户已撤销注入。
 `;
 
+const ALLMEM_CURSOR_SKILL_MD = `---
+name: allmem
+description: >
+  跨AI工具统一记忆管理。使用此skill可以加载你在所有AI工具(Claude/Codex/Cursor等)
+  中积累的项目记忆和用户画像，让AI从第一句话就了解你和你的项目。
+  触发词: "加载记忆", "load memory", "allmem", "项目上下文", "project context",
+  "你还记得吗", "之前我们讨论过"
+license: MIT
+metadata:
+  author: AllMem
+  version: "0.1.0"
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
+---
+
+# AllMem - Cursor 记忆注入
+
+当用户需要项目上下文或个人记忆时，执行以下步骤：
+
+## 步骤
+
+### 1. 读取用户全局信息
+
+\`\`\`bash
+cat ~/.allmem/user/instructions.md
+cat ~/.allmem/user/latest.md
+\`\`\`
+
+### 2. 识别当前项目
+
+1. 取得当前工作目录 cwd（Cursor 当前项目根目录）。
+2. 对路径做「归一化」后再与 meta.json 的 path 比较（Windows 下 d:\\ 与 D:\\ 应视为同一目录）：
+   - 将 / 统一为 \\
+   - trim 首尾空白
+   - 若是 Windows 盘符路径（如 D:\\foo），将盘符字母改为大写
+   - 若不是根目录（如不是单独的 D:\\），去掉末尾多余的 \\
+   - 比较时：将 cwd 与 meta.path 各自归一化后，再转为小写做相等判断（忽略大小写差异）
+3. 遍历 ~/.allmem/projects/*/meta.json，读取 path；找到第一个归一化后与 cwd 相等的项目目录名（文件夹名即 alias）。
+4. 若仍无匹配，在报告中明确写出 cwd 与已读到的各 meta.path（归一化后），便于用户核对。
+
+\`\`\`bash
+# 列出所有项目目录
+ls ~/.allmem/projects/
+# 读取某个项目的元信息（将 <project> 替换为上面找到的目录名）
+cat ~/.allmem/projects/<project>/meta.json
+\`\`\`
+
+### 3. 读取项目记忆和项目使用说明
+
+\`\`\`bash
+# 项目长期记忆（AI自动整理的稳定信息）
+cat ~/.allmem/projects/<project>/latest.md
+# 项目近期动态（最近几次同步的对话摘要）
+cat ~/.allmem/projects/<project>/recent.md
+# 项目使用说明（用户自己维护的，非常重要）
+cat ~/.allmem/projects/<project>/instructions.md
+\`\`\`
+
+### 4. 注入上下文（Cursor）
+
+将用户画像、项目记忆、项目使用说明整合，写入当前项目根目录的 AGENTS.md
+的 <!-- allmem-start --> 到 <!-- allmem-end --> 区块。
+
+注入格式示例：
+\`\`\`markdown
+<!-- allmem-start -->
+## AllMem 记忆上下文
+
+### 用户全局说明
+{用户instructions.md内容}
+
+### 用户画像
+{用户latest.md内容}
+
+### 项目使用说明
+{项目instructions.md内容 - 用户自己维护的}
+
+### 项目长期记忆
+{项目latest.md内容 - AI自动整理的稳定信息}
+
+### 近期动态
+{项目recent.md内容 - 最近几次同步的对话摘要，可能为空}
+
+*最后更新: {时间}*
+<!-- allmem-end -->
+\`\`\`
+
+重要：保留 AGENTS.md 中已有的其他内容，只更新 AllMem 区块；如果区块不存在则追加到文件末尾。
+
+### 5. 报告
+
+告诉用户：
+- 加载了哪个项目的记忆
+- 记忆的最后更新时间
+- 简要概括项目当前状态
+`;
+
 const ALLMEM_SYNC_SKILL_MD = `---
 name: allmem-sync
 description: >
@@ -343,15 +443,27 @@ export async function installSkillToClaude(): Promise<boolean> {
 
 export async function installSkillToCodex(): Promise<boolean> {
   const home = await homeDir();
-  // Codex CLI uses ~/.codex/instructions.md as global instructions
-  // We install our skill instructions there
   const codexDir = await join(home, ".codex");
+  const skillsRoot = await join(codexDir, "skills");
+  const allmemDir = await join(skillsRoot, "allmem");
+  const undoDir = await join(skillsRoot, "allmem-undo");
+  const syncDir = await join(skillsRoot, "allmem-sync");
+  const expDir = await join(skillsRoot, "allmem-exp");
 
   try {
-    if (!(await exists(codexDir))) {
-      await mkdir(codexDir, { recursive: true });
+    for (const dir of [codexDir, skillsRoot, allmemDir, undoDir, syncDir, expDir]) {
+      if (!(await exists(dir))) {
+        await mkdir(dir, { recursive: true });
+      }
     }
 
+    // Install directory-based skills for Codex, aligned with Cursor/Claude installation model.
+    await writeTextFile(await join(allmemDir, "SKILL.md"), ALLMEM_SKILL_MD);
+    await writeTextFile(await join(undoDir, "SKILL.md"), ALLMEM_UNDO_SKILL_MD);
+    await writeTextFile(await join(syncDir, "SKILL.md"), ALLMEM_SYNC_SKILL_MD);
+    await writeTextFile(await join(expDir, "SKILL.md"), ALLMEM_EXP_SKILL_MD);
+
+    // Backward compatibility: keep global instructions block for older Codex setups.
     const instructionsPath = await join(codexDir, "instructions.md");
     // NOTE: Keep this content stable and identifiable so we can upsert it safely.
     const skillContent = `
@@ -395,12 +507,45 @@ export async function installSkillToCodex(): Promise<boolean> {
   }
 }
 
-export async function isSkillInstalled(tool: "claude" | "codex"): Promise<boolean> {
+export async function installSkillToCursor(): Promise<boolean> {
+  const home = await homeDir();
+  // 仅安装到 `~/.cursor/skills-cursor`，避免与 `~/.cursor/skills` 重复导致 `/allmem` 出现多条。
+  const root = await join(home, ".cursor", "skills-cursor");
+
+  try {
+    const allmemDir = await join(root, "allmem");
+    const undoDir = await join(root, "allmem-undo");
+    const syncDir = await join(root, "allmem-sync");
+    const expDir = await join(root, "allmem-exp");
+
+    for (const dir of [root, allmemDir, undoDir, syncDir, expDir]) {
+      if (!(await exists(dir))) {
+        await mkdir(dir, { recursive: true });
+      }
+    }
+
+    // Cursor 的 skills 使用 `SKILL.md` 文件定义（技能目录名=skill name）。
+    await writeTextFile(await join(allmemDir, "SKILL.md"), ALLMEM_CURSOR_SKILL_MD);
+    await writeTextFile(await join(undoDir, "SKILL.md"), ALLMEM_UNDO_SKILL_MD);
+    await writeTextFile(await join(syncDir, "SKILL.md"), ALLMEM_SYNC_SKILL_MD);
+    await writeTextFile(await join(expDir, "SKILL.md"), ALLMEM_EXP_SKILL_MD);
+
+    return true;
+  } catch (err) {
+    console.error("Failed to install skill to Cursor:", err);
+    return false;
+  }
+}
+
+export async function isSkillInstalled(tool: "claude" | "codex" | "cursor"): Promise<boolean> {
   const home = await homeDir();
   if (tool === "claude") {
     return exists(await join(home, ".claude", "skills", "allmem", "SKILL.md"));
   }
   if (tool === "codex") {
+    const hasDirSkill = await exists(await join(home, ".codex", "skills", "allmem", "SKILL.md"));
+    if (hasDirSkill) return true;
+
     try {
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
       const content = await readTextFile(await join(home, ".codex", "instructions.md"));
@@ -412,6 +557,9 @@ export async function isSkillInstalled(tool: "claude" | "codex"): Promise<boolea
     } catch {
       return false;
     }
+  }
+  if (tool === "cursor") {
+    return exists(await join(home, ".cursor", "skills-cursor", "allmem", "SKILL.md"));
   }
   return false;
 }
@@ -441,10 +589,28 @@ export async function uninstallSkillFromClaude(): Promise<boolean> {
 export async function uninstallSkillFromCodex(): Promise<boolean> {
   const home = await homeDir();
   const instructionsPath = await join(home, ".codex", "instructions.md");
+  const skillsRoot = await join(home, ".codex", "skills");
+  const skillDirs = [
+    await join(skillsRoot, "allmem"),
+    await join(skillsRoot, "allmem-undo"),
+    await join(skillsRoot, "allmem-sync"),
+    await join(skillsRoot, "allmem-exp"),
+  ];
 
   try {
+    for (const dir of skillDirs) {
+      if (await exists(dir)) {
+        await remove(dir, { recursive: true });
+      }
+    }
+
     const { readTextFile } = await import("@tauri-apps/plugin-fs");
-    const content = await readTextFile(instructionsPath);
+    let content = "";
+    try {
+      content = await readTextFile(instructionsPath);
+    } catch {
+      return true;
+    }
     // Remove the AllMem section (both legacy and new headers). Use global replace to handle duplicates.
     const cleaned = content
       .replace(/\n?# AllMem 记忆管理[\s\S]*?(?=\n# |\r?\n# |$)/g, "")
@@ -458,6 +624,31 @@ export async function uninstallSkillFromCodex(): Promise<boolean> {
     return true;
   } catch (err) {
     console.error("Failed to uninstall skill from Codex:", err);
+    return false;
+  }
+}
+
+export async function uninstallSkillFromCursor(): Promise<boolean> {
+  const home = await homeDir();
+  // 主目录仅 skills-cursor；同时清理旧版在 `~/.cursor/skills` 下的副本，避免重复条目残留。
+  const skillRoots = [await join(home, ".cursor", "skills-cursor"), await join(home, ".cursor", "skills")];
+  const skillDirs: string[] = [];
+  for (const root of skillRoots) {
+    skillDirs.push(await join(root, "allmem"));
+    skillDirs.push(await join(root, "allmem-undo"));
+    skillDirs.push(await join(root, "allmem-sync"));
+    skillDirs.push(await join(root, "allmem-exp"));
+  }
+
+  try {
+    for (const dir of skillDirs) {
+      if (await exists(dir)) {
+        await remove(dir, { recursive: true });
+      }
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to uninstall skill from Cursor:", err);
     return false;
   }
 }

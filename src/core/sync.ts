@@ -1,7 +1,14 @@
 // Sync engine: orchestrate multi-agent extraction and archiving
 
-import { extractClaudeSessions, extractCodexSessions, turnsToText, groupByProject } from "./extractor";
-import { summarizeSingleConversation, compactMemory, extractUserInfo, generateVersionSummary, generateProjectDescription, narrateCausalChains, distillExperiences, mergeExperiences } from "./llm";
+import {
+  extractClaudeSessions,
+  extractCodexSessions,
+  extractCursorSessions,
+  turnsToText,
+  groupByProject,
+  looksLikeWindowsAbsPath,
+} from "./extractor";
+import { summarizeSingleConversation, compactMemory, extractUserInfo, generateVersionSummary, generateProjectDescription, narrateCausalChains, distillExperiences, mergeExperiences, dedupeUserProfileMarkdown } from "./llm";
 import { redactSensitive } from "./privacy";
 import { getLLMConfigForRole } from "./types";
 import type { Experience } from "./types";
@@ -22,6 +29,7 @@ import {
   initStorage,
   loadExperiences,
   saveExperiences,
+  dedupeProjectAliasesByPath,
 } from "./storage";
 import type { ProjectMeta, SyncResult } from "./types";
 
@@ -43,13 +51,16 @@ type ProgressCallback = (progress: SyncProgress) => void;
 export async function runSync(
   onProgress?: ProgressCallback,
   dryRun = false,
-  targetProjects?: string[]
+  targetProjects?: string[],
+  targetAgents?: string[],
+  targetProjectPaths?: string[]
 ): Promise<SyncResult[]> {
   await initStorage();
   const config = await loadConfig();
   const results: SyncResult[] = [];
   const syncStartTime = Date.now();
   const sinceTimestamp = config.sync.lastSyncTimestamp;
+  const activeAgents = targetAgents && targetAgents.length > 0 ? targetAgents : config.agents;
 
   onProgress?.({ stage: "检测", detail: "扫描已安装的AI工具...", progress: 5 });
 
@@ -64,14 +75,19 @@ export async function runSync(
 
   const extractPromises: Promise<{ agent: string; sessions: Awaited<ReturnType<typeof extractClaudeSessions>> }>[] = [];
 
-  if (config.agents.includes("claude")) {
+  if (activeAgents.includes("codex")) {
+    extractPromises.push(
+      extractCodexSessions(sinceTimestamp).then((sessions) => ({ agent: "codex", sessions }))
+    );
+  }
+  if (activeAgents.includes("claude")) {
     extractPromises.push(
       extractClaudeSessions(sinceTimestamp).then((sessions) => ({ agent: "claude", sessions }))
     );
   }
-  if (config.agents.includes("codex")) {
+  if (activeAgents.includes("cursor")) {
     extractPromises.push(
-      extractCodexSessions(sinceTimestamp).then((sessions) => ({ agent: "codex", sessions }))
+      extractCursorSessions(sinceTimestamp).then((sessions) => ({ agent: "cursor", sessions }))
     );
   }
 
@@ -104,12 +120,22 @@ export async function runSync(
 
   // Filter by syncProjects if specified
   const filteredGroups = new Map<string, typeof allSessions>();
-  const effectiveSyncAll = targetProjects ? false : config.syncAll;
+  const hasExplicitTargets =
+    (targetProjects?.length ?? 0) > 0 || (targetProjectPaths?.length ?? 0) > 0;
+  const effectiveSyncAll = hasExplicitTargets ? false : config.syncAll;
   const effectiveSyncProjects = targetProjects ?? config.syncProjects;
+  const effectiveSyncProjectPaths = new Set(
+    (targetProjectPaths ?? []).map((p) => normalizeProjectPathForMatch(p))
+  );
   for (const [path, sessions] of projectGroups) {
     const projectName = sessions[0].projectName;
     const alias = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-    if (effectiveSyncAll || effectiveSyncProjects.includes(alias)) {
+    const normalizedPath = normalizeProjectPathForMatch(path);
+    if (
+      effectiveSyncAll ||
+      effectiveSyncProjects.includes(alias) ||
+      effectiveSyncProjectPaths.has(normalizedPath)
+    ) {
       filteredGroups.set(path, sessions);
     }
   }
@@ -118,37 +144,53 @@ export async function runSync(
   // do a full extraction (no sinceTimestamp) to find them
   if (!effectiveSyncAll && sinceTimestamp) {
     const foundAliases = new Set<string>();
+    const foundPaths = new Set<string>();
     for (const [, sessions] of filteredGroups) {
       const alias = sessions[0].projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
       foundAliases.add(alias);
     }
+    for (const [path] of filteredGroups) {
+      foundPaths.add(normalizeProjectPathForMatch(path));
+    }
     const missingAliases = effectiveSyncProjects.filter((a) => !foundAliases.has(a));
+    const missingPaths = Array.from(effectiveSyncProjectPaths).filter(
+      (p) => !foundPaths.has(p)
+    );
 
-    if (missingAliases.length > 0) {
+    if (missingAliases.length > 0 || missingPaths.length > 0) {
       onProgress?.({
         stage: "提取",
-        detail: `为 ${missingAliases.join("、")} 重新全量提取...`,
+        detail: "为缺失项目重新全量提取...",
         progress: 25,
       });
 
       const fullExtractPromises: Promise<{ agent: string; sessions: Awaited<ReturnType<typeof extractClaudeSessions>> }>[] = [];
-      if (config.agents.includes("claude")) {
+      if (activeAgents.includes("claude")) {
         fullExtractPromises.push(
           extractClaudeSessions().then((sessions) => ({ agent: "claude", sessions }))
         );
       }
-      if (config.agents.includes("codex")) {
+      if (activeAgents.includes("codex")) {
         fullExtractPromises.push(
           extractCodexSessions().then((sessions) => ({ agent: "codex", sessions }))
+        );
+      }
+      if (activeAgents.includes("cursor")) {
+        fullExtractPromises.push(
+          extractCursorSessions().then((sessions) => ({ agent: "cursor", sessions }))
         );
       }
       const fullExtractions = await Promise.all(fullExtractPromises);
       const fullSessions = fullExtractions.flatMap((e) => e.sessions);
       const fullGroups = groupByProject(fullSessions);
+      const missingPathsSet = new Set(missingPaths);
 
       for (const [path, sessions] of fullGroups) {
         const alias = sessions[0].projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-        if (missingAliases.includes(alias) && !filteredGroups.has(path)) {
+        const normalizedPath = normalizeProjectPathForMatch(path);
+        const shouldInclude =
+          missingAliases.includes(alias) || missingPathsSet.has(normalizedPath);
+        if (shouldInclude && !hasProjectPath(filteredGroups, path)) {
           filteredGroups.set(path, sessions);
         }
       }
@@ -157,6 +199,7 @@ export async function runSync(
 
   const totalProjects = filteredGroups.size;
   let processedProjects = 0;
+  const updatedProjectsByAgent = new Map<string, number>();
   let lastProjectProgress = 0;
   const guardProjectProgress = (p: number) => {
     lastProjectProgress = Math.max(lastProjectProgress, p);
@@ -200,13 +243,25 @@ export async function runSync(
 
         // Load existing memory
         const alias = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+        // Auto-migrate legacy aliases that point to the same project path (e.g. asit -> travel_asit).
+        const storagePath = looksLikeWindowsAbsPath(sessions[0].projectPath)
+          ? sessions[0].projectPath
+          : "";
+        const migratedAliases = await dedupeProjectAliasesByPath(alias, storagePath).catch(() => []);
+        if (migratedAliases.length > 0) {
+          console.log(`[sync] alias migration: ${migratedAliases.join(",")} -> ${alias}`);
+        }
         const existingMemory = await loadProjectMemory(alias);
         const isUpdate = !!existingMemory;
+
+        const uniqueAgents = Array.from(new Set(sessions.map((s) => s.agent)));
+        const agentLabel = uniqueAgents.join(",");
+        const sessionSource = uniqueAgents.join("+");
 
         // ── Agent 1: Narrator (good model, sequential) ──
         onProgress?.({
           stage: "叙事",
-          detail: `提取 ${projectName} 的因果链... (${currentProjectIndex}/${totalProjects})`,
+          detail: `提取 ${projectName} 的因果链...（来源: ${agentLabel || "unknown"}）(${currentProjectIndex}/${totalProjects})`,
           progress: guardProjectProgress(getProjectProgress(0.1)),
         });
 
@@ -219,12 +274,11 @@ export async function runSync(
         // ── Agent 2 + 3: Curator + Distiller (parallel) ──
         onProgress?.({
           stage: isUpdate ? "更新" : "整理",
-          detail: `${isUpdate ? "更新" : "整理"} ${projectName} 的记忆... (${currentProjectIndex}/${totalProjects})`,
+          detail: `${isUpdate ? "更新" : "整理"} ${projectName} 的记忆...（来源: ${agentLabel || "unknown"}）(${currentProjectIndex}/${totalProjects})`,
           progress: guardProjectProgress(getProjectProgress(0.35)),
         });
 
         const cheapConfig = getLLMConfigForRole(config.llm, "curator");
-        const sessionSource = sessions[0]?.sessionId?.includes("codex") ? "codex" : "claude";
 
         // Curator task: summarize → WAL → compaction
         const curatorTask = async () => {
@@ -297,7 +351,7 @@ export async function runSync(
 
         const meta: ProjectMeta = {
           alias,
-          path: projectPath,
+          path: storagePath,
           description,
           notes: existingMeta?.notes ?? "",
           created: existingMeta?.created ?? new Date().toISOString(),
@@ -308,6 +362,12 @@ export async function runSync(
         await saveProjectMeta(alias, meta);
 
         processedProjects++;
+        for (const agentId of uniqueAgents) {
+          updatedProjectsByAgent.set(
+            agentId,
+            (updatedProjectsByAgent.get(agentId) ?? 0) + 1
+          );
+        }
         console.log(`[sync] Done: ${projectName}`);
 
         onProgress?.({
@@ -346,21 +406,21 @@ export async function runSync(
     console.log(`[distiller] Saved ${experiences.length} total experiences`);
   }
 
-  // ── Step 4: Update user profile (skip for single-project sync) ──
-  if (!targetProjects && userConversations.length > 0) {
+  // ── Step 4: Update user profile ──
+  // User requested manual project selection should also update user profile.
+  if (userConversations.length > 0) {
     onProgress?.({ stage: "用户画像", detail: "更新用户画像...", progress: 85 });
     try {
       const existingProfile = await loadUserMemory();
-      // Combine a sample of conversations (not all, to save tokens)
-      const sampleText = userConversations
-        .slice(0, 5)
-        .join("\n\n---\n\n");
+      // Combine a deduplicated sample (not all, to save tokens and reduce repeated profile facts)
+      const sampleText = buildDedupedUserProfileSample(userConversations);
 
-      const newProfile = await extractUserInfo(
+      const newProfileRaw = await extractUserInfo(
         sampleText,
         existingProfile,
         config.llm
       );
+      const newProfile = dedupeUserProfileMarkdown(newProfileRaw);
 
       const profileSummary = await generateVersionSummary(
         existingProfile,
@@ -382,7 +442,7 @@ export async function runSync(
     results.push({
       agent,
       projectsFound: grouped.size,
-      projectsUpdated: processedProjects,
+      projectsUpdated: updatedProjectsByAgent.get(agent) ?? 0,
       errors: [],
       timestamp: new Date().toISOString(),
     });
@@ -399,6 +459,51 @@ export async function runSync(
   await saveConfig(config);
 
   return results;
+}
+
+function buildDedupedUserProfileSample(conversations: string[]): string {
+  const picked = conversations.slice(0, 5);
+  const seen = new Set<string>();
+  const dedupedBlocks: string[] = [];
+
+  for (const convo of picked) {
+    const blocks = convo
+      .split(/\n{2,}/)
+      .map((b) => b.trim())
+      .filter(Boolean);
+    for (const block of blocks) {
+      const key = block
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      dedupedBlocks.push(block);
+      if (dedupedBlocks.length >= 120) break;
+    }
+    if (dedupedBlocks.length >= 120) break;
+  }
+
+  return dedupedBlocks.join("\n\n---\n\n");
+}
+
+function normalizeProjectPathForMatch(path: string): string {
+  let value = path.replace(/\//g, "\\").trim();
+  if (/^[a-zA-Z]:\\/.test(value)) {
+    value = value[0].toUpperCase() + value.slice(1);
+  }
+  if (!/^[a-zA-Z]:\\$/.test(value)) {
+    value = value.replace(/\\+$/, "");
+  }
+  return value.toLowerCase();
+}
+
+function hasProjectPath(groups: Map<string, unknown>, path: string): boolean {
+  const target = normalizeProjectPathForMatch(path);
+  for (const key of groups.keys()) {
+    if (normalizeProjectPathForMatch(key) === target) return true;
+  }
+  return false;
 }
 
 // Simple concurrency limiter

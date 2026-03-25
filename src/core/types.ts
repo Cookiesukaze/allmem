@@ -84,6 +84,29 @@ export interface Experience {
   updated: string;
 }
 
+// ── Scan Index (Project Cards) ─────────────────────────────────────────────
+
+export type IdeId = "claude" | "codex" | "cursor";
+
+export interface ScannedProjectCard {
+  // Stable identity for selection (prefer path-based key).
+  key: string;
+  // Must match runSync alias generation: projectName.toLowerCase().replace(/[^a-z0-9]/g, "_")
+  alias: string;
+  displayName: string; // usually projectName (folder name)
+  projectPath: string; // real storage address (workspace root); empty if unresolved
+  /** Cursor：workspace 根路径未能从本地索引/transcript 还原时置 true，勿把 projectId 当路径 */
+  pathUnresolved?: boolean;
+  cursorProjectId?: string;
+  ides: IdeId[];
+  updatedAt: string; // ISO timestamp of scan discovery
+}
+
+export interface ScannedIndex {
+  generatedAt: string; // ISO timestamp
+  cards: ScannedProjectCard[];
+}
+
 /** 根据角色返回对应的 LLM 配置（Curator 用廉价模型，其余用主模型） */
 export function getLLMConfigForRole(
   config: AllMemConfig["llm"],
@@ -109,7 +132,7 @@ export const DEFAULT_CONFIG: AllMemConfig = {
     maxCharsPerTurn: 800,
     compactionThreshold: 10,
   },
-  agents: ["claude", "codex"],
+  agents: ["claude", "codex", "cursor"],
   syncAll: true,
   syncProjects: [],
   privacy: {

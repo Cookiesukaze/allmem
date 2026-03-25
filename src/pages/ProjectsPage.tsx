@@ -28,11 +28,13 @@ import { readTextFile } from "@tauri-apps/plugin-fs";
 import { runSync } from "../core/sync";
 import { loadConfig } from "../core/storage";
 import type { MemoryVersion, ProjectMeta, Experience } from "../core/types";
+import { resolveCursorProjectPath } from "../core/extractor";
 
 export function ProjectsPage() {
   const { projects, setProjects, selectedProject, setSelectedProject, setConfig, projectSyncing: syncing, projectSyncStatus: syncStatus, setProjectSyncing: setSyncing, setProjectSyncStatus: setSyncStatus } = useAppStore();
   const [memory, setMemory] = useState<string>("");
   const [meta, setMeta] = useState<ProjectMeta | null>(null);
+  const [displayPath, setDisplayPath] = useState<string | null>(null);
   const [versions, setVersions] = useState<MemoryVersion[]>([]);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
@@ -64,6 +66,24 @@ export function ProjectsPage() {
       loadProjectVersions();
     }
   }, [selectedProject]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!meta?.path) {
+        setDisplayPath(null);
+        return;
+      }
+      const resolved = await resolveCursorProjectPath(meta.path);
+      if (!cancelled) setDisplayPath(resolved);
+    }
+    run().catch(() => {
+      if (!cancelled) setDisplayPath(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [meta?.path]);
 
   const loadProjectVersions = async () => {
     if (!selectedProject) return;
@@ -116,7 +136,9 @@ export function ProjectsPage() {
 
   const handleOpenFolder = async (path: string) => {
     try {
-      await invoke("open_folder", { path: path.replace(/\//g, "\\") });
+      const resolved = await resolveCursorProjectPath(path);
+      const finalPath = (resolved ?? path).replace(/\//g, "\\");
+      await invoke("open_folder", { path: finalPath });
     } catch (err) {
       console.error("Failed to open folder:", err);
     }
@@ -223,7 +245,9 @@ export function ProjectsPage() {
                   onClick={() => setSelectedProject(project.alias)}
                 >
                   <h3 className="text-sm font-medium">{project.alias}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">{project.path}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {project.path || "路径未解析"}
+                  </p>
                   {project.description && (
                     <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{project.description}</p>
                   )}
@@ -238,9 +262,13 @@ export function ProjectsPage() {
                     )}
                   </div>
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleOpenFolder(project.path); }}
-                    className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                    title="打开项目文件夹"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (project.path) handleOpenFolder(project.path);
+                    }}
+                    disabled={!project.path}
+                    className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                    title={project.path ? "打开项目文件夹" : "路径未解析，无法打开文件夹"}
                   >
                     <FolderOpen size={14} />
                   </button>
@@ -292,7 +320,9 @@ export function ProjectsPage() {
         <div className="flex-1">
           <h1 className="text-xl font-semibold">{selectedProject}</h1>
           {meta && (
-            <p className="text-xs text-muted-foreground">{meta.path}</p>
+            <p className="text-xs text-muted-foreground">
+              {(displayPath ?? meta.path) || "路径未解析"}
+            </p>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -430,7 +460,7 @@ export function ProjectsPage() {
               <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">路径</span>
-                  <span className="font-mono text-right truncate ml-2 max-w-[200px]">{meta.path}</span>
+                  <span className="font-mono text-right truncate ml-2 max-w-[200px]">{displayPath ?? meta.path}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">状态</span>
