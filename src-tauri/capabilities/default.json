@@ -18,7 +18,9 @@
         { "path": "$HOME/.codex" },
         { "path": "$HOME/.codex/**" },
         { "path": "$HOME/.cursor" },
-        { "path": "$HOME/.cursor/**" }
+        { "path": "$HOME/.cursor/**" },
+        { "path": "$HOME/AppData/Roaming/Cursor/User/workspaceStorage" },
+        { "path": "$HOME/AppData/Roaming/Cursor/User/workspaceStorage/**" }
       ]
     },
     {
@@ -31,7 +33,9 @@
         { "path": "$HOME/.codex" },
         { "path": "$HOME/.codex/**" },
         { "path": "$HOME/.cursor" },
-        { "path": "$HOME/.cursor/**" }
+        { "path": "$HOME/.cursor/**" },
+        { "path": "$HOME/AppData/Roaming/Cursor/User/workspaceStorage" },
+        { "path": "$HOME/AppData/Roaming/Cursor/User/workspaceStorage/**" }
       ]
     },
     {
@@ -41,6 +45,7 @@
         { "path": "$HOME/.claude/**" },
         { "path": "$HOME/.codex/**" },
         { "path": "$HOME/.cursor/**" },
+        { "path": "$HOME/AppData/Roaming/Cursor/User/workspaceStorage/**" },
         { "path": "**" }
       ]
     },
@@ -61,7 +66,9 @@
         { "path": "$HOME/.claude" },
         { "path": "$HOME/.claude/**" },
         { "path": "$HOME/.codex" },
-        { "path": "$HOME/.codex/**" }
+        { "path": "$HOME/.codex/**" },
+        { "path": "$HOME/.cursor" },
+        { "path": "$HOME/.cursor/**" }
       ]
     },
     {
@@ -74,7 +81,10 @@
         { "path": "$HOME/.codex" },
         { "path": "$HOME/.codex/**" },
         { "path": "$HOME/.cursor" },
-        { "path": "$HOME/.cursor/**" }
+        { "path": "$HOME/.cursor/**" },
+        { "path": "$HOME/AppData/Roaming/Cursor/User/workspaceStorage" },
+        { "path": "$HOME/AppData/Roaming/Cursor/User/workspaceStorage/**" },
+        { "path": "D:/2026/**" }
       ]
     },
     {
@@ -86,7 +96,10 @@
     {
       "identifier": "fs:allow-remove",
       "allow": [
-        { "path": "$HOME/.allmem/**" }
+        { "path": "$HOME/.allmem/**" },
+        { "path": "$HOME/.claude/**" },
+        { "path": "$HOME/.codex/**" },
+        { "path": "$HOME/.cursor/**" }
       ]
     },
     "shell:default",
