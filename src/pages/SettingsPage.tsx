@@ -35,6 +35,8 @@ export function SettingsPage() {
     // 重新检测 AI 工具（自定义路径可能已更改）
     const agents = await detectAgents();
     setDetectedAgents(agents);
+    // 重新检测 skill 安装状态
+    await checkSkillStatus();
     setTimeout(() => setSaving(false), 1000);
   };
 
