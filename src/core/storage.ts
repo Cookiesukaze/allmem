@@ -64,6 +64,7 @@ export async function loadConfig(): Promise<AllMemConfig> {
         userProfile: saved.injection?.userProfile ?? DEFAULT_CONFIG.injection.userProfile,
       },
       privacy: { ...DEFAULT_CONFIG.privacy, ...saved.privacy },
+      customPaths: { ...DEFAULT_CONFIG.customPaths, ...saved.customPaths },
     };
   } catch {
     return DEFAULT_CONFIG;

@@ -3,12 +3,18 @@
 import { exists } from "@tauri-apps/plugin-fs";
 import { join, homeDir } from "@tauri-apps/api/path";
 import type { AgentDef } from "./types";
+import { loadConfig } from "./storage";
 
 export async function detectAgents(): Promise<AgentDef[]> {
   const home = await homeDir();
+  const config = await loadConfig();
 
-  const claudeDir = await join(home, ".claude", "projects");
-  const codexDir = await join(home, ".codex", "sessions");
+  const claudeDir = config.customPaths?.claude
+    ? await join(config.customPaths.claude, "projects")
+    : await join(home, ".claude", "projects");
+  const codexDir = config.customPaths?.codex
+    ? await join(config.customPaths.codex, "sessions")
+    : await join(home, ".codex", "sessions");
 
   const defs: Omit<AgentDef, "detected">[] = [
     {

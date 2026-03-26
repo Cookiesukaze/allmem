@@ -6,6 +6,7 @@ import {
   stat,
 } from "@tauri-apps/plugin-fs";
 import { join, homeDir } from "@tauri-apps/api/path";
+import { loadConfig } from "./storage";
 
 interface ConversationTurn {
   role: "user" | "assistant";
@@ -27,7 +28,10 @@ export async function extractClaudeSessions(
   sinceTimestamp?: number
 ): Promise<ExtractedSession[]> {
   const home = await homeDir();
-  const projectsDir = await join(home, ".claude", "projects");
+  const config = await loadConfig();
+  const projectsDir = config.customPaths?.claude
+    ? await join(config.customPaths.claude, "projects")
+    : await join(home, ".claude", "projects");
 
   const sessions: ExtractedSession[] = [];
 
@@ -154,7 +158,10 @@ export async function extractCodexSessions(
   sinceTimestamp?: number
 ): Promise<ExtractedSession[]> {
   const home = await homeDir();
-  const sessionsDir = await join(home, ".codex", "sessions");
+  const config = await loadConfig();
+  const sessionsDir = config.customPaths?.codex
+    ? await join(config.customPaths.codex, "sessions")
+    : await join(home, ".codex", "sessions");
 
   const sessions: ExtractedSession[] = [];
 

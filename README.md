@@ -50,6 +50,10 @@ LLM 使用 OpenAI 兼容接口（可自行配置 API Key 和模型）
 - 更省Token、更清晰、更多种记忆存储管理方式
 - 上层应用
 
+## 社区
+
+欢迎加入 [Linux.do](https://linux.do) 社区讨论
+
 ## License
 
 [MIT](./LICENSE)

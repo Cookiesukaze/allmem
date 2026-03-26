@@ -35,6 +35,10 @@ export interface AllMemConfig {
     sensitiveWords: string[];
     replacement: string;
   };
+  customPaths: {
+    claude?: string;
+    codex?: string;
+  };
 }
 
 export interface ProjectMeta {
@@ -192,6 +196,7 @@ export const DEFAULT_CONFIG: AllMemConfig = {
     sensitiveWords: [],
     replacement: "[***]",
   },
+  customPaths: {},
 };
 
 

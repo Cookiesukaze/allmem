@@ -32,6 +32,9 @@ export function SettingsPage() {
   const handleSave = async () => {
     setSaving(true);
     await saveConfig(config);
+    // 重新检测 AI 工具（自定义路径可能已更改）
+    const agents = await detectAgents();
+    setDetectedAgents(agents);
     setTimeout(() => setSaving(false), 1000);
   };
 
@@ -342,6 +345,52 @@ export function SettingsPage() {
             </div>
           </>
         )}
+      </div>
+
+      {/* Custom Paths */}
+      <div className="bg-card rounded-xl border border-border p-4 space-y-4">
+        <div>
+          <h3 className="text-sm font-medium">AI 工具路径</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            如果你的 AI 工具配置目录不在默认位置，可以在这里指定自定义路径
+          </p>
+        </div>
+
+        <div>
+          <label className="text-xs text-muted-foreground block mb-1">
+            Claude Code 配置目录（默认：~/.claude）
+          </label>
+          <input
+            type="text"
+            value={config.customPaths?.claude ?? ""}
+            onChange={(e) =>
+              setConfig({
+                ...config,
+                customPaths: { ...config.customPaths, claude: e.target.value || undefined },
+              })
+            }
+            placeholder="留空使用默认路径"
+            className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs text-muted-foreground block mb-1">
+            Codex CLI 配置目录（默认：~/.codex）
+          </label>
+          <input
+            type="text"
+            value={config.customPaths?.codex ?? ""}
+            onChange={(e) =>
+              setConfig({
+                ...config,
+                customPaths: { ...config.customPaths, codex: e.target.value || undefined },
+              })
+            }
+            placeholder="留空使用默认路径"
+            className="w-full px-3 py-1.5 text-sm bg-secondary rounded-lg border border-border outline-none focus:border-primary"
+          />
+        </div>
       </div>
 
       {/* Skill Installation */}

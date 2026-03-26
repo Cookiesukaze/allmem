@@ -11,27 +11,13 @@
     {
       "identifier": "fs:allow-exists",
       "allow": [
-        { "path": "$HOME/.allmem" },
-        { "path": "$HOME/.allmem/**" },
-        { "path": "$HOME/.claude" },
-        { "path": "$HOME/.claude/**" },
-        { "path": "$HOME/.codex" },
-        { "path": "$HOME/.codex/**" },
-        { "path": "$HOME/.cursor" },
-        { "path": "$HOME/.cursor/**" }
+        { "path": "**" }
       ]
     },
     {
       "identifier": "fs:allow-read-dir",
       "allow": [
-        { "path": "$HOME/.allmem" },
-        { "path": "$HOME/.allmem/**" },
-        { "path": "$HOME/.claude" },
-        { "path": "$HOME/.claude/**" },
-        { "path": "$HOME/.codex" },
-        { "path": "$HOME/.codex/**" },
-        { "path": "$HOME/.cursor" },
-        { "path": "$HOME/.cursor/**" }
+        { "path": "**" }
       ]
     },
     {
@@ -48,10 +34,9 @@
       "identifier": "fs:allow-write-text-file",
       "allow": [
         { "path": "$HOME/.allmem/**" },
-        { "path": "$HOME/.claude/**" },
-        { "path": "$HOME/.codex/**" },
-        { "path": "$HOME/.cursor/**" },
-        { "path": "**" }
+        { "path": "$HOME/.claude/skills/**" },
+        { "path": "$HOME/.codex/skills/**" },
+        { "path": "**/skills/**" }
       ]
     },
     {
@@ -59,23 +44,18 @@
       "allow": [
         { "path": "$HOME/.allmem" },
         { "path": "$HOME/.allmem/**" },
-        { "path": "$HOME/.claude" },
-        { "path": "$HOME/.claude/**" },
-        { "path": "$HOME/.codex" },
-        { "path": "$HOME/.codex/**" }
+        { "path": "$HOME/.claude/skills" },
+        { "path": "$HOME/.claude/skills/**" },
+        { "path": "$HOME/.codex/skills" },
+        { "path": "$HOME/.codex/skills/**" },
+        { "path": "**/skills" },
+        { "path": "**/skills/**" }
       ]
     },
     {
       "identifier": "fs:allow-stat",
       "allow": [
-        { "path": "$HOME/.allmem" },
-        { "path": "$HOME/.allmem/**" },
-        { "path": "$HOME/.claude" },
-        { "path": "$HOME/.claude/**" },
-        { "path": "$HOME/.codex" },
-        { "path": "$HOME/.codex/**" },
-        { "path": "$HOME/.cursor" },
-        { "path": "$HOME/.cursor/**" }
+        { "path": "**" }
       ]
     },
     {
@@ -87,7 +67,10 @@
     {
       "identifier": "fs:allow-remove",
       "allow": [
-        { "path": "$HOME/.allmem/**" }
+        { "path": "$HOME/.allmem/**" },
+        { "path": "$HOME/.claude/skills/**" },
+        { "path": "$HOME/.codex/skills/**" },
+        { "path": "**/skills/**" }
       ]
     },
     "shell:default",

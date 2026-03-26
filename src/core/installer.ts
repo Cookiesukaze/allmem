@@ -2,6 +2,7 @@
 
 import { exists, mkdir, writeTextFile, remove } from "@tauri-apps/plugin-fs";
 import { join, homeDir } from "@tauri-apps/api/path";
+import { loadConfig } from "./storage";
 
 const ALLMEM_SKILL_MD = `---
 name: al-pull
@@ -335,9 +336,13 @@ cat ~/.allmem/projects/<project>/recent.md 2>/dev/null
 
 export async function installSkillToClaude(): Promise<boolean> {
   const home = await homeDir();
-  const skillDir = await join(home, ".claude", "skills", "al-pull");
-  const syncSkillDir = await join(home, ".claude", "skills", "al-push");
-  const searchSkillDir = await join(home, ".claude", "skills", "al-search");
+  const config = await loadConfig();
+
+  const claudeBase = config.customPaths?.claude || await join(home, ".claude");
+
+  const skillDir = await join(claudeBase, "skills", "al-pull");
+  const syncSkillDir = await join(claudeBase, "skills", "al-push");
+  const searchSkillDir = await join(claudeBase, "skills", "al-search");
 
   try {
     for (const dir of [skillDir, syncSkillDir, searchSkillDir]) {
@@ -368,9 +373,13 @@ export async function installSkillToClaude(): Promise<boolean> {
 
 export async function installSkillToCodex(): Promise<boolean> {
   const home = await homeDir();
-  const skillDir = await join(home, ".codex", "skills", "al-pull");
-  const syncSkillDir = await join(home, ".codex", "skills", "al-push");
-  const searchSkillDir = await join(home, ".codex", "skills", "al-search");
+  const config = await loadConfig();
+
+  const codexBase = config.customPaths?.codex || await join(home, ".codex");
+
+  const skillDir = await join(codexBase, "skills", "al-pull");
+  const syncSkillDir = await join(codexBase, "skills", "al-push");
+  const searchSkillDir = await join(codexBase, "skills", "al-search");
 
   try {
     for (const dir of [skillDir, syncSkillDir, searchSkillDir]) {
@@ -485,27 +494,35 @@ When user says "al-search", "find memory", or "do you remember":
 
 export async function isSkillInstalled(tool: "claude" | "codex"): Promise<boolean> {
   const home = await homeDir();
+  const config = await loadConfig();
+
   if (tool === "claude") {
-    return exists(await join(home, ".claude", "skills", "al-pull", "SKILL.md"));
+    const claudeBase = config.customPaths?.claude || await join(home, ".claude");
+    return exists(await join(claudeBase, "skills", "al-pull", "SKILL.md"));
   }
   if (tool === "codex") {
-    return exists(await join(home, ".codex", "skills", "al-pull", "SKILL.md"));
+    const codexBase = config.customPaths?.codex || await join(home, ".codex");
+    return exists(await join(codexBase, "skills", "al-pull", "SKILL.md"));
   }
   return false;
 }
 
 export async function uninstallSkillFromClaude(): Promise<boolean> {
   const home = await homeDir();
+  const config = await loadConfig();
+
+  const claudeBase = config.customPaths?.claude || await join(home, ".claude");
+
   const skillDirs = [
-    await join(home, ".claude", "skills", "al-pull"),
-    await join(home, ".claude", "skills", "al-push"),
-    await join(home, ".claude", "skills", "al-search"),
+    await join(claudeBase, "skills", "al-pull"),
+    await join(claudeBase, "skills", "al-push"),
+    await join(claudeBase, "skills", "al-search"),
     // 旧名称也清理
-    await join(home, ".claude", "skills", "allmem"),
-    await join(home, ".claude", "skills", "allmem-undo"),
-    await join(home, ".claude", "skills", "allmem-sync"),
-    await join(home, ".claude", "skills", "allmem-exp"),
-    await join(home, ".claude", "skills", "al-undo"),
+    await join(claudeBase, "skills", "allmem"),
+    await join(claudeBase, "skills", "allmem-undo"),
+    await join(claudeBase, "skills", "allmem-sync"),
+    await join(claudeBase, "skills", "allmem-exp"),
+    await join(claudeBase, "skills", "al-undo"),
   ];
 
   try {
@@ -523,10 +540,14 @@ export async function uninstallSkillFromClaude(): Promise<boolean> {
 
 export async function uninstallSkillFromCodex(): Promise<boolean> {
   const home = await homeDir();
+  const config = await loadConfig();
+
+  const codexBase = config.customPaths?.codex || await join(home, ".codex");
+
   const skillDirs = [
-    await join(home, ".codex", "skills", "al-pull"),
-    await join(home, ".codex", "skills", "al-push"),
-    await join(home, ".codex", "skills", "al-search"),
+    await join(codexBase, "skills", "al-pull"),
+    await join(codexBase, "skills", "al-push"),
+    await join(codexBase, "skills", "al-search"),
   ];
 
   try {
