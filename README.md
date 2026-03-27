@@ -50,10 +50,6 @@ LLM 使用 OpenAI 兼容接口（可自行配置 API Key 和模型）
 - 更省Token、更清晰、更多种记忆存储管理方式
 - 上层应用
 
-## 社区
-
-欢迎加入 [Linux.do](https://linux.do) 社区讨论
-
 ## License
 
 [MIT](./LICENSE)
@@ -61,3 +57,8 @@ LLM 使用 OpenAI 兼容接口（可自行配置 API Key 和模型）
 ## 社区
 
 欢迎加入 [Linux.do](https://linux.do/t/topic/1814756) 社区讨论
+
+## 收集到的反馈
+- Mac版
+- WSL支持
+- 删除项目后同步项目选择找不到了的BUG
