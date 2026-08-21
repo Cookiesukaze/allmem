@@ -1,3 +1,5 @@
+
+
 ﻿# AllMem
 
 跨 AI 工具的统一记忆管理。作者痛恨和 AI 沟通的每一天。
@@ -30,7 +32,7 @@
 git clone https://github.com/Cookiesukaze/allmem.git
 cd allmem
 npm install
-npx tauri dev
+npm run tauri dev
 ```
 
 首次编译 Rust 约 2-5 分钟，之后会自动弹出桌面窗口。
